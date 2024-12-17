@@ -111,11 +111,6 @@ jobs:
           cd pm4-k8s-distribution/images/pm4-tools
           composer install --no-interaction
           cd ..
-      - name: Print partial secret
-        run: |
-          echo "${SECRET:0:5}*****"
-        env:
-          SECRET: ${{ secrets.AWS_ACCESS_KEY_ID }}
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
@@ -127,6 +122,7 @@ jobs:
           curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/
+          echo ${{ secrets.AWS_ACCESS_KEY_ID }} | md5sum
       - name: Authenticate with Amazon EKS
         run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
       - name: Deploy instance EKS
