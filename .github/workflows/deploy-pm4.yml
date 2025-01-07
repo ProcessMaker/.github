@@ -111,9 +111,6 @@ jobs:
           cd pm4-k8s-distribution/images/pm4-tools
           composer install --no-interaction
           cd ..
-      - name: fake step for testing
-        run: |
-          echo test;
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
