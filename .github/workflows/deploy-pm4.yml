@@ -94,7 +94,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: processmaker/.github
-          ref: argo-removal
 
       - name: Common 
         uses: ./.github/actions/common
