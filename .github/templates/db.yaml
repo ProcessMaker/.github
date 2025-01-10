@@ -1,0 +1,53 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mysql-setup-job-ci-{{INSTANCE}}
+spec:
+  template:
+    spec:
+      containers:
+      - name: mysql-client
+        image: mysql:8
+        command: ["/bin/bash"]
+        args:
+          - -c
+          - |
+            mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" <<EOF
+            # Create databases
+            CREATE DATABASE IF NOT EXISTS \`pm4_ci-{{INSTANCE}}\`;
+            CREATE DATABASE IF NOT EXISTS \`pm4_ci-{{INSTANCE}}_ai\`;
+            # Create users
+            CREATE USER IF NOT EXISTS 'user_ci-{{INSTANCE}}'@'%' IDENTIFIED BY '{{MYSQL_PASSWORD}}';
+            CREATE USER IF NOT EXISTS 'user_ci-{{INSTANCE}}_ai'@'%' IDENTIFIED BY '{{MYSQL_PASSWORD}}';
+            # Grant permissions
+            GRANT ALL PRIVILEGES ON \`pm4_ci-{{INSTANCE}}\`.* TO 'user_ci-{{INSTANCE}}'@'%';
+            GRANT ALL PRIVILEGES ON \`pm4_ci-{{INSTANCE}}_ai\`.* TO 'user_ci-{{INSTANCE}}_ai'@'%';
+            FLUSH PRIVILEGES;
+            # Output the created resources
+            SELECT CONCAT('Created database: pm4_', 'ci-{{INSTANCE}}') AS setup_info;
+            SELECT CONCAT('Created database: pm4_', 'ci-{{INSTANCE}}', '_ai') AS setup_info;
+            SELECT CONCAT('Created user: user_', 'ci-{{INSTANCE}}', '@%') AS setup_info;
+            SELECT CONCAT('Created user: user_', 'ci-{{INSTANCE}}', '_ai@%') AS setup_info;
+            SELECT CONCAT('Password: ', '{{MYSQL_PASSWORD}}') AS setup_info;
+            EOF
+        env:
+          - name: IMAGE_TAG
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.annotations['image-tag']
+          - name: DB_HOST
+            valueFrom:
+              secretKeyRef:
+                name: mysql-secrets
+                key: DB_HOST
+          - name: DB_USER
+            valueFrom:
+              secretKeyRef:
+                name: mysql-secrets
+                key: DB_USER
+          - name: DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: mysql-secrets
+                key: DB_PASSWORD
+      restartPolicy: Never

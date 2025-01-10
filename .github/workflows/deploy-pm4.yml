@@ -3,8 +3,8 @@ run-name: ${{ github.actor }} send deploy EKS 🚀
 on:
   pull_request:
     types: [opened, reopened, synchronize, edited, closed]
-  schedule:
-    - cron: '30 2 * * *'  # run daily
+  #schedule:
+  #  - cron: '30 2 * * *'  # run daily
   workflow_dispatch:
   workflow_call:
 env:
@@ -83,10 +83,79 @@ jobs:
         run: |          
           docker tag processmaker/enterprise:${{env.IMAGE_TAG}} ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${{env.IMAGE_TAG}}
           docker push ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${{env.IMAGE_TAG}}
+  
   deployEKS:
-    name: build-deploy-EKS
+    name: deploy-EKS
     if: contains(github.event.pull_request.body, 'ci:deploy')
     needs: imageEKS
+    runs-on: ${{ vars.RUNNER }}
+    steps:
+      - name: Checkout .github repo
+        uses: actions/checkout@v4
+        with:
+          repository: processmaker/.github
+
+      - name: Common 
+        uses: ./.github/actions/common
+        with:
+          token: ${{ secrets.GIT_TOKEN }}
+      
+      - name: Install pm4-tools
+        run: |
+          cd pm4-k8s-distribution/images/pm4-tools
+          composer install --no-interaction
+          cd ..
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Set up kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+          echo ${{ secrets.AWS_ACCESS_KEY_ID }} | md5sum
+
+      - name: Authenticate with Amazon EKS
+        run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
+      
+      - name: Deploy instance EKS
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          CURRENT_DATE: ${{ env.CURRENT_DATE }}
+          HELM_REPO: ${{ secrets.HELM_REPO }}
+          HELM_USERNAME: ${{ secrets.HELM_USERNAME }}
+          HELM_PASSWORD: ${{ secrets.HELM_PASSWORD }}
+          OPEN_AI_API_KEY: ${{ secrets.OPEN_AI_API_KEY }}
+          ANALYTICS_AWS_ACCESS_KEY: ${{ secrets.ANALYTICS_AWS_ACCESS_KEY }}
+          ANALYTICS_AWS_SECRET_KEY: ${{ secrets.ANALYTICS_AWS_SECRET_KEY }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+          REGISTRY_HOST: ${{ secrets.REGISTRY_HOST }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          TWILIO_SID: ${{ secrets.TWILIO_SID }}
+          TWILIO_TOKEN: ${{ secrets.TWILIO_TOKEN }}
+          versionHelm: ${{ env.versionHelm }}
+          DOM_EKS: ${{ env.DOM_EKS }}
+        run: |
+          instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
+          sed -i 's/{{INSTANCE}}/'"$instance"'/g' .github/scripts/deploy-instance.sh
+          sed -i 's/{{INSTANCE}}/'"$instance"'/g' .github/templates/instance.yaml
+          sed -i 's/{{INSTANCE}}/'"$instance"'/g' .github/templates/db.yaml
+          sed -i 's/{{IMAGE_TAG}}/'"${{env.IMAGE_TAG}}"'/g' .github/templates/instance.yaml
+          chmod +x .github/scripts/deploy-instance.sh
+          bash .github/scripts/deploy-instance.sh
+          export INSTANCE_URL="https://ci-$instance.engk8s.processmaker.net"
+          echo "Instance URL: $INSTANCE_URL"
+          bash .github/scripts/gh_comment.sh "$CI_PROJECT" "$pull_req_id"
+
+  runAPITest:
+    name: Run API Tests
+    needs: [deployEKS]
+    if: contains(github.event.pull_request.body, 'ci:api-test')
     runs-on: ${{ vars.RUNNER }}
     steps:
       - name: Checkout
@@ -99,117 +168,33 @@ jobs:
         with:
           token: ${{ secrets.GIT_TOKEN }}
 
-      - name: Clone private repository
-        run: |
-          git clone --depth 1 -b eng "https://$GITHUB_TOKEN@github.com/ProcessMaker/argocd.git" argocd
       - name: Install pm4-tools
         run: |
-          # Moved to common action
-          # git clone --depth 1 -b "$K8S_BRANCH" "https://$GITHUB_TOKEN@github.com/ProcessMaker/pm4-k8s-distribution.git" pm4-k8s-distribution     
-          # echo "versionHelm=$(grep "version:" "pm4-k8s-distribution/charts/enterprise/Chart.yaml" | awk '{print $2}' | sed 's/\"//g')" >> $GITHUB_ENV
-
-          cd pm4-k8s-distribution/images/pm4-tools
-          composer install --no-interaction
-          cd ..
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
-      - name: Set up kubectl
-        run: |
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/
-          echo ${{ secrets.AWS_ACCESS_KEY_ID }} | md5sum
-      - name: Authenticate with Amazon EKS
-        run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
-      - name: Deploy instance EKS
-        run: |
-          cd argocd 
-          deploy=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
-          current_datetime=$(echo -n ${{env.CURRENT_DATE}} | md5sum | head -c 10)
-          echo "NAMESPACE : ci-$deploy-ns-pm4"
-          helm repo add processmaker ${{ secrets.HELM_REPO }} --username ${{ secrets.HELM_USERNAME }} --password ${{ secrets.HELM_PASSWORD }} && helm repo update
-          if ! kubectl get namespace/ci-$deploy-ns-pm4 ; then 
-            echo "Creating DB"
-            sed -i "s/{{instance}}/ci-$deploy/" template-db.yaml
-            kubectl apply -f template-db.yaml
-            echo "Creating Deploy :: $deploy"
-            #Sed PMAI
-            if [[ $RELEASE_BRANCH == "release-2024-summer" ]] ; then
-              sed -i "s/{{pmai-system}}/pmai-system/" template-instance.yaml
-            else
-              sed -i "s/{{pmai-system}}/pmai-system-next/" template-instance.yaml
-            fi
-            sed -i "s/{{instance}}/ci-$deploy/" template-instance.yaml
-            sed -i "s/{{image}}/${{env.IMAGE_TAG}}/" template-instance.yaml
-            cat template-instance.yaml         
-            helm install --timeout 60m -f template-instance.yaml ci-$deploy processmaker/enterprise
-            #Add cert
-            sed -i "s/{{instance}}/ci-$deploy/" template-cert.yaml
-            sed -i "s/{{tls-crt}}/${{ secrets.TLS_CRT }}/" template-cert.yaml
-            sed -i "s/{{tls-key}}/${{ secrets.TLS_KEY }}/" template-cert.yaml
-            kubectl apply -f template-cert.yaml          
-          else
-            echo "Bouncing Instance  ";
-            sed -i "s/{{instance}}/ci-$deploy/g" template-bounce.yaml
-            sed -i "s/{{current_datetime}}/$current_datetime/g" template-bounce.yaml
-            helm upgrade --timeout 60m ci-$deploy processmaker/enterprise --version ${{ env.versionHelm }}          
-            kubectl apply -f template-bounce.yaml
-          fi
-          export INSTANCE_URL=https://ci-$deploy$DOM_EKS
-          echo "INSTANCE_URL=${INSTANCE_URL}" >> "$GITHUB_ENV"
-          ../pm4-k8s-distribution/images/pm4-tools/pm wait-for-instance-ready
-      - name: Comment Instance
-        run: |
-          echo "Instance URL: '${INSTANCE_URL}'"
-          bash argocd/gh_comment.sh "$CI_PROJECT" "$pull_req_id"
-  runAPITest:
-    name: Run API Tests
-    needs: [deployEKS]
-    if: contains(github.event.pull_request.body, 'ci:api-test')
-    runs-on: self-hosted
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          repository: processmaker/.github
-
-      - name: Common 
-        uses: ./.github/actions/common
-        with:
-          token: ${{ secrets.GIT_TOKEN }}
-
-      - name: Clone private repository
-        run: |
-          git clone --depth 1 -b eng "https://$GITHUB_TOKEN@github.com/ProcessMaker/argocd.git" argocd
-      - name: Install pm4-tools
-        run: |
-          git clone --depth 1 -b "$RELEASE_BRANCH" "https://$GITHUB_TOKEN@github.com/ProcessMaker/pm4-k8s-distribution.git" pm4-k8s-distribution     
           echo "versionHelm=$(grep "version:" "pm4-k8s-distribution/charts/enterprise/Chart.yaml" | awk '{print $2}' | sed 's/\"//g')" >> $GITHUB_ENV
           cd pm4-k8s-distribution/images/pm4-tools
           composer install --no-interaction
           cd ..
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID1 }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY1 }}
           aws-region: ${{ secrets.AWS_REGION }}
+
       - name: Set up kubectl
         run: |
           curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/
+
       - name: Authenticate with Amazon EKS
         run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
+      
       - name: Run the API tests
         run: |
-          cd argocd 
-          deploy=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
-          namespace="ci-$deploy-ns-pm4"
+          INSTANCE=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
+          namespace="ci-$INSTANCE-ns-pm4"
           pr_body=$(jq -r .pull_request.body < "$GITHUB_EVENT_PATH" | base64)
           kubectl get pods --namespace=$namespace
           pod_names=$(kubectl get pods --namespace=$namespace --field-selector=status.phase=Running -o jsonpath="{.items[*].metadata.name}" | tr ' ' '\n' | grep -E '(-processmaker-scheduler-)')
@@ -221,6 +206,7 @@ jobs:
               if [ ! -z "$has_processmaker" ] && [ ! -z "$has_sudo" ] && [ ! -z "$has_php" ]; then
                 echo $pr_body | base64 -d > /tmp/pr_body
                 cd /opt/processmaker
+                docker system prune -af
                 sudo -u nginx php artisan package-api-testing:run --body="$pr_body"
               else
                 exit 1
@@ -253,22 +239,25 @@ jobs:
     steps:
       - name: Delete instance EKS
         run: |           
-          deploy=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
-          if kubectl get namespace/ci-$deploy-ns-pm4 ; then
-            echo "Deleting Instace :: ci-$deploy"
-            helm delete ci-$deploy
-            kubectl delete namespace ci-$deploy-ns-pm4
+          INSTANCE=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
+          if kubectl get namespace/ci-$INSTANCE-ns-pm4 ; then
+            echo "Deleting Instace :: ci-$INSTANCE"
+            helm delete ci-$INSTANCE
+            kubectl delete namespace ci-$INSTANCE-ns-pm4
             #Drop database
-            deploy_db="\`pm4_ci-$deploy\`"
-            deploy_ai="\`pm4_ci-${deploy}_ai\`" 
+            deploy_db="\`pm4_ci-$INSTANCE\`"
+            deploy_ai="\`pm4_ci-$INSTANCE_ai\`" 
             mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP DATABASE $deploy_db" -h ${{ secrets.RDS_ENG }}
             mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP DATABASE $deploy_ai" -h ${{ secrets.RDS_ENG }}
+            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP USER 'user_ci-$INSTANCE'@'%'" -h ${{ secrets.RDS_ENG }}
+            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP USER 'user_ci-$INSTANCE_ai'@'%'" -h ${{ secrets.RDS_ENG }}
             #Drop image Harbor        
             curl -X DELETE -u ${{ secrets.REGISTRY_USERNAME }}:${{ secrets.REGISTRY_PASSWORD }} "https://${{ secrets.REGISTRY_HOST }}/api/v2.0/projects/processmaker/repositories/enterprise/artifacts/${{env.IMAGE_TAG}}"
-            echo "The instance [https://ci-$deploy.engk8s.processmaker.net] was deleted!!"
+            echo "The instance [https://ci-$INSTANCE.engk8s.processmaker.net] was deleted!!"
           else
-            echo "The pull request does not have an instance on K8s [https://ci-$deploy.engk8s.processmaker.net] not found!!"
+            echo "The pull request does not have an instance on K8s [https://ci-$INSTANCE.engk8s.processmaker.net] not found!!"
           fi
+
   runPhpUnit:
     name: run-phpunit
     if: github.event.action != 'closed'
@@ -295,12 +284,14 @@ jobs:
       #   run: |
       #     echo "IMAGE: ${{ env.IMAGE }}"
       #     git clone --depth 1 -b "$K8S_BRANCH" "https://$GITHUB_TOKEN@github.com/ProcessMaker/pm4-k8s-distribution.git" pm4-k8s-distribution
+
       - name: Login to Harbor
         uses: docker/login-action@v2
         with:
           registry: ${{ secrets.REGISTRY_HOST  }}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
+
       - name: PHPUnits
         run: |          
           cd pm4-k8s-distribution/images/pm4-tools
@@ -310,11 +301,13 @@ jobs:
           docker compose run phpunit
           CONTAINER_ID=$(docker ps -a --filter ancestor=pm4-eks-phpunit:latest --format "{{.ID}}" | head -n 1)
           docker cp $CONTAINER_ID:/opt/processmaker/coverage.xml coverage.xml
+
       - name: Archive code coverage
         uses: actions/upload-artifact@v4
         with:
           name: code-coverage
           path: ./pm4-k8s-distribution/images/pm4-tools/coverage.xml
+
       - name: SonarQube Coverage Report
         uses: sonarsource/sonarqube-scan-action@master
         env:
