@@ -299,8 +299,7 @@ jobs:
           docker compose down -v
           docker compose build phpunit
           docker compose run phpunit
-          docker ps -a
-          CONTAINER_ID=$(docker ps -a --filter ancestor=pm4-eks-phpunit:latest --format "{{.ID}}" | head -n 1)
+          CONTAINER_ID=$(docker ps -a | grep php-unit | awk '{print $1}')
           docker cp $CONTAINER_ID:/opt/processmaker/coverage.xml coverage.xml
 
       - name: Archive code coverage
