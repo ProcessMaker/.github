@@ -300,6 +300,7 @@ jobs:
           docker compose build phpunit
           docker compose run phpunit
           CONTAINER_ID=$(docker ps -a | grep php-unit | awk '{print $1}')
+          docker ps -a
           echo "The value of CONTAINER_ID is $CONTAINER_ID"
           docker cp $CONTAINER_ID:/opt/processmaker/coverage.xml coverage.xml
 
