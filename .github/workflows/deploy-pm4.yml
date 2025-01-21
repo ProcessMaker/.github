@@ -32,7 +32,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
-  imageEKS:
+  #imageEKS:
     #name: build-docker-image-EKS
     #if: github.event.action != 'closed'
     #runs-on: ${{ vars.RUNNER }}
