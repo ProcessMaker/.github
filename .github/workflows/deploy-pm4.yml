@@ -298,12 +298,12 @@ jobs:
           docker pull $IMAGE
           docker compose down -v
           docker compose build phpunit
-          #docker compose run phpunit
+          docker compose run phpunit
           CONTAINER_ID=$(sudo docker ps -a | grep php-unit | awk '{print $1}')
           sudo docker container ls
           sudo docker ps -a
           echo "The value of CONTAINER_ID is $CONTAINER_ID"
-          docker cp $CONTAINER_ID:/opt/processmaker/coverage.xml coverage.xml
+          sudo docker cp $CONTAINER_ID:/opt/processmaker/coverage.xml coverage.xml
 
       - name: Archive code coverage
         uses: actions/upload-artifact@v4
