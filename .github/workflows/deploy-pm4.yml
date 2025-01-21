@@ -299,7 +299,7 @@ jobs:
           docker compose down -v
           docker compose build phpunit
           docker compose run phpunit
-          CONTAINER_ID=$(sudo docker ps -a | grep php-unit | awk '{print $1}')
+          CONTAINER_ID=$(sudo docker ps -a | grep phpunit | awk '{print $1}')
           sudo docker container ls
           sudo docker ps -a
           echo "The value of CONTAINER_ID is $CONTAINER_ID"
