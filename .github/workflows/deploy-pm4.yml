@@ -87,7 +87,7 @@ jobs:
   deployEKS:
     name: deploy-EKS
     if: contains(github.event.pull_request.body, 'ci:deploy')
-    needs: imageEKS
+    #needs: imageEKS
     runs-on: ${{ vars.RUNNER }}
     steps:
       - name: Checkout .github repo
@@ -154,7 +154,7 @@ jobs:
 
   runAPITest:
     name: Run API Tests
-    needs: [deployEKS]
+    #needs: [deployEKS]
     if: contains(github.event.pull_request.body, 'ci:api-test')
     runs-on: ${{ vars.RUNNER }}
     steps:
