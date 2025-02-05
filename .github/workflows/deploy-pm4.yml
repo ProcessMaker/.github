@@ -140,12 +140,16 @@ jobs:
           TWILIO_TOKEN: ${{ secrets.TWILIO_TOKEN }}
           versionHelm: ${{ env.versionHelm }}
           DOM_EKS: ${{ env.DOM_EKS }}
+          KEYCLOAK_CLIENT_SECRET: ${{ secrets.KEYCLOAK_CLIENT_SECRET }}
+          KEYCLOAK_PASSWORD: ${{ secrets.KEYCLOAK_PASSWORD }}
         run: |
           instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
           sed -i 's/{{INSTANCE}}/'"$instance"'/g' .github/scripts/deploy-instance.sh
           sed -i 's/{{INSTANCE}}/'"$instance"'/g' .github/templates/instance.yaml
           sed -i 's/{{INSTANCE}}/'"$instance"'/g' .github/templates/db.yaml
           sed -i 's/{{IMAGE_TAG}}/'"${{env.IMAGE_TAG}}"'/g' .github/templates/instance.yaml
+          sed -i 's/{{KEYCLOAK_CLIENT_SECRET}}/'"${{env.KEYCLOAK_CLIENT_SECRET}}"'/g' .github/templates/instance.yaml
+          sed -i 's/{{KEYCLOAK_PASSWORD}}/'"${{env.KEYCLOAK_PASSWORD}}"'/g' .github/templates/instance.yaml
           chmod +x .github/scripts/deploy-instance.sh
           bash .github/scripts/deploy-instance.sh
           export INSTANCE_URL="https://ci-$instance.engk8s.processmaker.net"
