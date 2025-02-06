@@ -56,12 +56,12 @@ microservices:
   scriptExecutor:
     enable: true
     customExecutors: false
-    baseUrl: https://script-microsvr.processmaker.net
+    baseUrl: https://script-microsvr-us-east-1.processmaker.net
     version: v4.12.2
     keycloakClientId: microservices
     keycloakClientSecret: {{KEYCLOAK_CLIENT_SECRET}}
-    keycloakBaseUrl: https://sso-microsvr.processmaker.net/realms/master/protocol/openid-connect/token
-    keycloakUsername: pminstance
+    keycloakBaseUrl: https://sso-microsvr-us-east-1.processmaker.net/realms/master/protocol/openid-connect/token
+    keycloakUsername: pminstance-us-east-1
     keycloakPassword: {{KEYCLOAK_PASSWORD}}
 twilio:
   enable: true
