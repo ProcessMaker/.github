@@ -1,9 +1,13 @@
 appVersion: {{IMAGE_TAG}}
+eksCluster: pm4-eng
 appConfig:
   https: false
   subdomain: .engk8s.processmaker.net
   customSecurityPolicy: true
   customSecurityPolicyUrl: 'https://adobexdplatform.com https://*.quicksight.aws.amazon.com https://www.canva.com https://excalidraw.com https://www.figma.com https://flocus.com https://www.framer.com https://giphy.com https://lookerstudio.google.com https://maps.google.com https://docs.google.com https://www.loom.com https://miro.com https://mixpanel.com https://pitch.com https://prezi.com https://www.sketch.com https://www.slideshare.net https://supademo.com https://www.tableau.com https://forms.app https://vimeo.com https://www.youtube.com'
+  licenseRepo: processmaker/customer-licenses.git
+  licenseBranch: production
+  licenseGitToken: {{CUSTOMER_LICENSES_PAT}}
 deploy:
   pmai:
     openaiHost: pmai-svc.{{pmai-system}}.svc.cluster.local

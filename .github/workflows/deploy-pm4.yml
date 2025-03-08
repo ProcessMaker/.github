@@ -27,6 +27,7 @@ env:
   GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
   BUILD_BASE: ${{ (contains(github.event.pull_request.body, 'ci:build-base') || github.event_name == 'schedule') && '1' || '0' }}
   BASE_IMAGE: ${{ secrets.REGISTRY_HOST }}/processmaker/processmaker:base
+  CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
   # K8S_BRANCH: ${{ contains(github.event.pull_request.body, 'ci:next') && 'next' || 'release-2024-fall' }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -142,6 +143,7 @@ jobs:
           DOM_EKS: ${{ env.DOM_EKS }}
           KEYCLOAK_CLIENT_SECRET: ${{ secrets.KEYCLOAK_CLIENT_SECRET }}
           KEYCLOAK_PASSWORD: ${{ secrets.KEYCLOAK_PASSWORD }}
+          CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
         run: |
           instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
           sed -i 's/{{INSTANCE}}/'"$instance"'/g' .github/scripts/deploy-instance.sh
@@ -150,6 +152,7 @@ jobs:
           sed -i 's/{{IMAGE_TAG}}/'"${{env.IMAGE_TAG}}"'/g' .github/templates/instance.yaml
           sed -i 's/{{KEYCLOAK_CLIENT_SECRET}}/'"${{env.KEYCLOAK_CLIENT_SECRET}}"'/g' .github/templates/instance.yaml
           sed -i 's/{{KEYCLOAK_PASSWORD}}/'"${{env.KEYCLOAK_PASSWORD}}"'/g' .github/templates/instance.yaml
+          sed -i 's/{{CUSTOMER_LICENSES_PAT}}/'"${{env.CUSTOMER_LICENSES_PAT}}"'/g' .github/templates/instance.yaml
           chmod +x .github/scripts/deploy-instance.sh
           bash .github/scripts/deploy-instance.sh
           export INSTANCE_URL="https://ci-$instance.engk8s.processmaker.net"
