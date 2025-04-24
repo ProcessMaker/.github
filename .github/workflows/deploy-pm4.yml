@@ -22,7 +22,6 @@ env:
   DEPLOY: ${{ secrets.DEPLOY }}
   GH_USER: ${{ secrets.GH_USER }}
   GH_EMAIL: ${{ secrets.GH_EMAIL }}
-  GITHUB_COMMENT: ${{ secrets.GH_COMMENT }}
   DOM_EKS: ${{ secrets.DOM_EKS }}
   GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
   BUILD_BASE: ${{ (contains(github.event.pull_request.body, 'ci:build-base') || github.event_name == 'schedule') && '1' || '0' }}
