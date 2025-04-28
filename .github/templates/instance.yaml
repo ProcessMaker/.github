@@ -17,8 +17,7 @@ deploy:
     dbUsername: user_ci-{{INSTANCE}}_ai
     dbPassword: {{MYSQL_PASSWORD}}
   volumes:
-    # TO DO: get EFS working in cicd cluster
-    #storageClassName: 'efs-sc'
+    storageClassName: 'efs-sc'
     storage:
       diskSize: 1Gi
   executor:
