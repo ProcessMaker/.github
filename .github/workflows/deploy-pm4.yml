@@ -47,7 +47,14 @@ jobs:
         uses: ./.github/actions/common
         with:
           token: ${{ secrets.GIT_TOKEN }}
-
+      
+      - name: Login to Harbor
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ secrets.REGISTRY_HOST  }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+        
       - name: Set image name
         run: |
             RESOLVED_IMAGE_TAG=${{ env.IMAGE_TAG }}
@@ -56,7 +63,7 @@ jobs:
         run: |
           cd pm4-k8s-distribution/images
           export CI_RELEASE_BRANCH=$RELEASE_BRANCH
-          branch=$(echo "${{ env.CI_PACKAGE_BRANCH }}" | sed 's/refs-heads-//g') tag=${{env.IMAGE_TAG}} bash build.k8s-cicd.sh
+          branch=$(echo "${{ env.CI_PACKAGE_BRANCH }}" | sed 's/refs-heads-//g') tag=${{env.IMAGE_TAG}} registry_host=${{ secrets.REGISTRY_HOST }} bash build.k8s-cicd.sh
           echo "VERSION=${{ env.IMAGE_TAG }}" >> $GITHUB_ENV
       - name: List Images
         run: |
@@ -73,12 +80,6 @@ jobs:
       #     severity: 'MEDIUM,HIGH,CRITICAL'
       #   env:
       #     TRIVY_TIMEOUT: 30m
-      - name: Login to Harbor
-        uses: docker/login-action@v2
-        with:
-          registry: ${{ secrets.REGISTRY_HOST  }}
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
       - name: Push Enterprise Image to Harbor
         run: |          
           docker tag processmaker/enterprise:${{env.IMAGE_TAG}} ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${{env.IMAGE_TAG}}
