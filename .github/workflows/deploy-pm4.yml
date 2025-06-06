@@ -143,6 +143,8 @@ jobs:
           KEYCLOAK_CLIENT_SECRET: ${{ secrets.KEYCLOAK_CLIENT_SECRET }}
           KEYCLOAK_PASSWORD: ${{ secrets.KEYCLOAK_PASSWORD }}
           CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
+          RDS_ADMIN_USERNAME: ${{ secrets.RDS_ADMIN_USERNAME }}
+          RDS_ADMIN_PASSWORD: ${{ secrets.RDS_ADMIN_PASSWORD }}
         run: |
           instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
           sed -i 's/{{INSTANCE}}/'"$instance"'/g' .github/scripts/deploy-instance.sh

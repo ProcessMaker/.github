@@ -30,7 +30,7 @@ database:
   deploy: false
   host: pm4-eng-stm-rds-cluster.cluster-ckz0mnb6cuna.us-east-1.rds.amazonaws.com
   name: pm4_ci-{{INSTANCE}}
-  username: user_ci-{{INSTANCE}}
+  username: {{MYSQL_USER}}
   password: {{MYSQL_PASSWORD}}
 analytics:
   awsRegion: us-east-1

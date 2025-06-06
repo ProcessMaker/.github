@@ -8,16 +8,10 @@ if ! kubectl get namespace/ci-{{INSTANCE}}-ns-pm4 >/dev/null 2>&1; then
     echo "New instance. Creating Namespace"
     kubectl create namespace ci-{{INSTANCE}}-ns-pm4
     echo "Creating DB"
-    # Generate random password
-    echo "Generating MySQL Password"
-    export MYSQL_PASSWORD=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)
+    # Use admin password from secrets
     echo "Update instance yamls"
-    echo "Current Directory"
-    pwd
-    ls -lah
-    
-    sed -i "s/{{MYSQL_PASSWORD}}/$MYSQL_PASSWORD/" .github/templates/db.yaml
-    
+    sed -i "s/{{MYSQL_USERNAME}}/$RDS_ADMIN_USERNAME/" .github/templates/db.yaml
+    sed -i "s/{{MYSQL_PASSWORD}}/$RDS_ADMIN_PASSWORD/" .github/templates/db.yaml
     echo "Creating DB :: pm4_ci-{{INSTANCE}}"
     cat .github/templates/db.yaml
     kubectl apply -f .github/templates/db.yaml --v=4
