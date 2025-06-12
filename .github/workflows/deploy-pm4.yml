@@ -81,7 +81,7 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
       - name: Push Enterprise Image to Harbor
-        if: !contains(github.event.pull_request.body, 'ci:skip-build')
+        if: ${{ !contains(github.event.pull_request.body, 'ci:skip-build') }}
         run: |          
           docker tag processmaker/enterprise:${{env.IMAGE_TAG}} ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${{env.IMAGE_TAG}}
           docker push ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${{env.IMAGE_TAG}}
