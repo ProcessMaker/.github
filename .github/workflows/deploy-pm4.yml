@@ -34,7 +34,7 @@ concurrency:
 jobs:
   imageEKS:
     name: build-docker-image-EKS
-    if: github.event.action != 'closed' && !contains(github.event.pull_request.body, 'ci:skip-build')
+    if: github.event.action != 'closed'
     runs-on: ${{ vars.RUNNER }}
     steps:
 
@@ -53,6 +53,7 @@ jobs:
             RESOLVED_IMAGE_TAG=${{ env.IMAGE_TAG }}
             echo "IMAGE=${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:$RESOLVED_IMAGE_TAG" >> $GITHUB_ENV
       - name: Generate image EKS
+        if: !contains(github.event.pull_request.body, 'ci:skip-build')
         run: |
           cd pm4-k8s-distribution/images
           export CI_RELEASE_BRANCH=$RELEASE_BRANCH
@@ -80,6 +81,7 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
       - name: Push Enterprise Image to Harbor
+        if: !contains(github.event.pull_request.body, 'ci:skip-build')
         run: |          
           docker tag processmaker/enterprise:${{env.IMAGE_TAG}} ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${{env.IMAGE_TAG}}
           docker push ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${{env.IMAGE_TAG}}
