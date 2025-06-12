@@ -34,7 +34,7 @@ concurrency:
 jobs:
   imageEKS:
     name: build-docker-image-EKS
-    if: github.event.action != 'closed'
+    if: github.event.action != 'closed' && !contains(github.event.pull_request.body, 'ci:skip-build')
     runs-on: ${{ vars.RUNNER }}
     steps:
 
