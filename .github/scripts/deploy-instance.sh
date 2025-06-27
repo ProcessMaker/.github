@@ -10,6 +10,9 @@ if ! kubectl get namespace/ci-{{INSTANCE}}-ns-pm4 >/dev/null 2>&1; then
     echo "Creating DB"
     # Use admin password from secrets
     echo "Update instance yamls"
+    
+    export RDS_ADMIN_PASSWORD=$RDS_ADMIN_PASSWORD
+    export RDS_ADMIN_USERNAME=$RDS_ADMIN_USERNAME
     sed -i "s/{{MYSQL_USERNAME}}/$RDS_ADMIN_USERNAME/" .github/templates/db.yaml
     sed -i "s/{{MYSQL_PASSWORD}}/$RDS_ADMIN_PASSWORD/" .github/templates/db.yaml
     echo "Creating DB :: pm4_ci-{{INSTANCE}}"
@@ -30,7 +33,8 @@ if ! kubectl get namespace/ci-{{INSTANCE}}-ns-pm4 >/dev/null 2>&1; then
     echo "Removing Job"
     kubectl delete job mysql-setup-job-ci-{{INSTANCE}}
     echo "Deploying Instance :: ci-{{INSTANCE}}"
-    sed -i "s/{{MYSQL_PASSWORD}}/$MYSQL_PASSWORD/g" .github/templates/instance.yaml
+    sed -i "s/{{MYSQL_PASSWORD}}/$RDS_ADMIN_PASSWORD/" .github/templates/instance.yaml
+    sed -i "s/{{MYSQL_USERNAME}}/$RDS_ADMIN_USERNAME/" .github/templates/instance.yaml
     cat .github/templates/instance.yaml
     
     helm install --timeout 75m -f .github/templates/instance.yaml ci-{{INSTANCE}} processmaker/enterprise \
