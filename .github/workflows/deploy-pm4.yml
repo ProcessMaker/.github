@@ -150,15 +150,15 @@ jobs:
           RDS_ADMIN_PASSWORD: ${{ secrets.RDS_ADMIN_PASSWORD }}
         run: |
           instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
-          sed -i 's/{{INSTANCE}}/'"$instance"'/g' .github/scripts/deploy-instance.sh
-          sed -i 's/{{INSTANCE}}/'"$instance"'/g' .github/templates/instance.yaml
-          sed -i 's/{{INSTANCE}}/'"$instance"'/g' .github/templates/db.yaml
-          sed -i 's/{{IMAGE_TAG}}/'"${{env.IMAGE_TAG}}"'/g' .github/templates/instance.yaml
-          sed -i 's/{{KEYCLOAK_CLIENT_SECRET}}/'"${{env.KEYCLOAK_CLIENT_SECRET}}"'/g' .github/templates/instance.yaml
-          sed -i 's/{{KEYCLOAK_PASSWORD}}/'"${{env.KEYCLOAK_PASSWORD}}"'/g' .github/templates/instance.yaml
-          sed -i 's/{{CUSTOMER_LICENSES_PAT}}/'"${{env.CUSTOMER_LICENSES_PAT}}"'/g' .github/templates/instance.yaml
-          sed -i 's/{{MYSQL_USERNAME}}/'"${{env.RDS_ADMIN_USERNAME}}"'/' .github/templates/instance.yaml
-          sed -i 's/{{MYSQL_PASSWORD}}/'"${{env.RDS_ADMIN_PASSWORD}}"'/' .github/templates/instance.yaml
+          sed -i "s/{{INSTANCE}}/$instance/g" .github/scripts/deploy-instance.sh
+          sed -i "s/{{INSTANCE}}/$instance/g" .github/templates/instance.yaml
+          sed -i "s/{{INSTANCE}}/$instance/g" .github/templates/db.yaml
+          sed -i "s/{{IMAGE_TAG}}/$IMAGE_TAG/g" .github/templates/instance.yaml
+          sed -i "s/{{KEYCLOAK_CLIENT_SECRET}}/$KEYCLOAK_CLIENT_SECRET/g" .github/templates/instance.yaml
+          sed -i "s/{{KEYCLOAK_PASSWORD}}/$KEYCLOAK_PASSWORD/g" .github/templates/instance.yaml
+          sed -i "s/{{CUSTOMER_LICENSES_PAT}}/$CUSTOMER_LICENSES_PAT/g" .github/templates/instance.yaml
+          sed -i "s/{{MYSQL_USER}}/$RDS_ADMIN_USERNAME/" .github/templates/instance.yaml
+          sed -i "s/{{MYSQL_PASSWORD}}/$RDS_ADMIN_PASSWORD/" .github/templates/instance.yaml
           chmod +x .github/scripts/deploy-instance.sh
           bash .github/scripts/deploy-instance.sh
           export INSTANCE_URL="https://ci-$instance.engk8s.processmaker.net"
