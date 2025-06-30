@@ -157,6 +157,8 @@ jobs:
           sed -i 's/{{KEYCLOAK_CLIENT_SECRET}}/'"${{env.KEYCLOAK_CLIENT_SECRET}}"'/g' .github/templates/instance.yaml
           sed -i 's/{{KEYCLOAK_PASSWORD}}/'"${{env.KEYCLOAK_PASSWORD}}"'/g' .github/templates/instance.yaml
           sed -i 's/{{CUSTOMER_LICENSES_PAT}}/'"${{env.CUSTOMER_LICENSES_PAT}}"'/g' .github/templates/instance.yaml
+          sed -i 's/{{MYSQL_USERNAME}}/'"${{env.RDS_ADMIN_USERNAME}}"'/' .github/templates/instance.yaml
+          sed -i 's/{{MYSQL_PASSWORD}}/'"${{env.RDS_ADMIN_PASSWORD}}"'/' .github/templates/instance.yaml
           chmod +x .github/scripts/deploy-instance.sh
           bash .github/scripts/deploy-instance.sh
           export INSTANCE_URL="https://ci-$instance.engk8s.processmaker.net"
