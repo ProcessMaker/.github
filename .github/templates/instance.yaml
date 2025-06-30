@@ -14,7 +14,7 @@ deploy:
     deployDb: false
     dbHost: pm4-eng-stm-rds-cluster.cluster-ckz0mnb6cuna.us-east-1.rds.amazonaws.com
     dbName: pm4_ci-{{INSTANCE}}_ai
-    dbUsername: user_ci-{{INSTANCE}}_ai
+    dbUsername: {{MYSQL_USER}}
     dbPassword: {{MYSQL_PASSWORD}}
   volumes:
     storageClassName: 'efs-sc'
