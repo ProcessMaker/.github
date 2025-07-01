@@ -157,6 +157,12 @@ jobs:
           echo "CUSTOMER_LICENSES_PAT: $CUSTOMER_LICENSES_PAT"
           echo "RDS_ADMIN_USERNAME: $RDS_ADMIN_USERNAME"
           echo "RDS_ADMIN_PASSWORD: $RDS_ADMIN_PASSWORD"
+          echo "Checking if secrets are set:"
+          echo "KEYCLOAK_CLIENT_SECRET length: ${#KEYCLOAK_CLIENT_SECRET}"
+          echo "KEYCLOAK_PASSWORD length: ${#KEYCLOAK_PASSWORD}"
+          echo "CUSTOMER_LICENSES_PAT length: ${#CUSTOMER_LICENSES_PAT}"
+          echo "RDS_ADMIN_USERNAME length: ${#RDS_ADMIN_USERNAME}"
+          echo "RDS_ADMIN_PASSWORD length: ${#RDS_ADMIN_PASSWORD}"
           sed -i "s#{{INSTANCE}}#$instance#g" .github/scripts/deploy-instance.sh
           sed -i "s#{{INSTANCE}}#$instance#g" .github/templates/instance.yaml
           sed -i "s#{{INSTANCE}}#$instance#g" .github/templates/db.yaml
