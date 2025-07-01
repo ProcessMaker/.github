@@ -34,7 +34,7 @@ if ! kubectl get namespace/ci-{{INSTANCE}}-ns-pm4 >/dev/null 2>&1; then
     kubectl delete job mysql-setup-job-ci-{{INSTANCE}}
     echo "Deploying Instance :: ci-{{INSTANCE}}"
     sed -i "s/{{MYSQL_PASSWORD}}/$RDS_ADMIN_PASSWORD/" .github/templates/instance.yaml
-    sed -i "s/{{MYSQL_USERNAME}}/$RDS_ADMIN_USERNAME/" .github/templates/instance.yaml
+    sed -i "s/{{MYSQL_USER}}/$RDS_ADMIN_USERNAME/" .github/templates/instance.yaml
     cat .github/templates/instance.yaml
     
     helm install --timeout 75m -f .github/templates/instance.yaml ci-{{INSTANCE}} processmaker/enterprise \
