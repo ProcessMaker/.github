@@ -172,6 +172,8 @@ jobs:
           sed -i "s#{{CUSTOMER_LICENSES_PAT}}#$CUSTOMER_LICENSES_PAT#g" .github/templates/instance.yaml
           sed -i "s#{{MYSQL_USER}}#$RDS_ADMIN_USERNAME#g" .github/templates/instance.yaml
           sed -i "s#{{MYSQL_PASSWORD}}#$RDS_ADMIN_PASSWORD#g" .github/templates/instance.yaml
+          sed -i "s#{{MYSQL_USERNAME}}#$RDS_ADMIN_USERNAME#g" .github/templates/db.yaml
+          sed -i "s#{{MYSQL_PASSWORD}}#$RDS_ADMIN_PASSWORD#g" .github/templates/db.yaml
           chmod +x .github/scripts/deploy-instance.sh
           bash .github/scripts/deploy-instance.sh
           export INSTANCE_URL="https://ci-$instance.engk8s.processmaker.net"
