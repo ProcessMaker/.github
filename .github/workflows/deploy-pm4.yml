@@ -32,64 +32,64 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
-  #imageEKS:
-  #  name: build-docker-image-EKS
-  #  if: github.event.action != 'closed'
-  #  runs-on: ${{ vars.RUNNER }}
-  #  steps:
+  imageEKS:
+    name: build-docker-image-EKS
+    if: github.event.action != 'closed'
+    runs-on: ${{ vars.RUNNER }}
+    steps:
 
-  #    - name: Checkout
-  #      uses: actions/checkout@v4
-  #      with:
-  #        repository: processmaker/.github
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: processmaker/.github
 
-  #    - name: Common 
-  #      uses: ./.github/actions/common
-  #      with:
-  #        token: ${{ secrets.GIT_TOKEN }}
+      - name: Common 
+        uses: ./.github/actions/common
+        with:
+          token: ${{ secrets.GIT_TOKEN }}
 
-  #    - name: Set image name
-  #      run: |
-  #          RESOLVED_IMAGE_TAG=${{ env.IMAGE_TAG }}
-  #          echo "IMAGE=${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:$RESOLVED_IMAGE_TAG" >> $GITHUB_ENV
-  #    - name: Generate image EKS
-  #      if: ${{ !contains(github.event.pull_request.body, 'ci:skip-build') }}
-  #      run: |
-  #        cd pm4-k8s-distribution/images
-  #        export CI_RELEASE_BRANCH=$RELEASE_BRANCH
-  #        branch=$(echo "${{ env.CI_PACKAGE_BRANCH }}" | sed 's/refs-heads-//g') tag=${{env.IMAGE_TAG}} bash build.k8s-cicd.sh
-  #        echo "VERSION=${{ env.IMAGE_TAG }}" >> $GITHUB_ENV
-  #    - name: List Images
-  #      run: |
-  #        docker images
-  #    # - name: Run Trivy vulnerability scanner
-  #    #   uses: aquasecurity/trivy-action@master
-  #    #   with:
-  #    #     image-ref: processmaker/enterprise:${{ env.VERSION }}
-  #    #     format: 'table'
-  #    #     exit-code: '0'
-  #    #     ignore-unfixed: false
-  #    #     vuln-type: 'os,library'
-  #    #     scanners: 'vuln,secret'
-  #    #     severity: 'MEDIUM,HIGH,CRITICAL'
-  #    #   env:
-  #    #     TRIVY_TIMEOUT: 30m
-  #    - name: Login to Harbor
-  #      uses: docker/login-action@v2
-  #      with:
-  #        registry: ${{ secrets.REGISTRY_HOST  }}
-  #        username: ${{ secrets.REGISTRY_USERNAME }}
-  #        password: ${{ secrets.REGISTRY_PASSWORD }}
-  #    - name: Push Enterprise Image to Harbor
-  #      if: ${{ !contains(github.event.pull_request.body, 'ci:skip-build') }}
-  #      run: |          
-  #        docker tag processmaker/enterprise:${{env.IMAGE_TAG}} ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${{env.IMAGE_TAG}}
-  #        docker push ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${{env.IMAGE_TAG}}
+      - name: Set image name
+        run: |
+            RESOLVED_IMAGE_TAG=${{ env.IMAGE_TAG }}
+            echo "IMAGE=${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:$RESOLVED_IMAGE_TAG" >> $GITHUB_ENV
+      - name: Generate image EKS
+        if: ${{ !contains(github.event.pull_request.body, 'ci:skip-build') }}
+        run: |
+          cd pm4-k8s-distribution/images
+          export CI_RELEASE_BRANCH=$RELEASE_BRANCH
+          branch=$(echo "${{ env.CI_PACKAGE_BRANCH }}" | sed 's/refs-heads-//g') tag=${{env.IMAGE_TAG}} bash build.k8s-cicd.sh
+          echo "VERSION=${{ env.IMAGE_TAG }}" >> $GITHUB_ENV
+      - name: List Images
+        run: |
+          docker images
+      # - name: Run Trivy vulnerability scanner
+      #   uses: aquasecurity/trivy-action@master
+      #   with:
+      #     image-ref: processmaker/enterprise:${{ env.VERSION }}
+      #     format: 'table'
+      #     exit-code: '0'
+      #     ignore-unfixed: false
+      #     vuln-type: 'os,library'
+      #     scanners: 'vuln,secret'
+      #     severity: 'MEDIUM,HIGH,CRITICAL'
+      #   env:
+      #     TRIVY_TIMEOUT: 30m
+      - name: Login to Harbor
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ secrets.REGISTRY_HOST  }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - name: Push Enterprise Image to Harbor
+        if: ${{ !contains(github.event.pull_request.body, 'ci:skip-build') }}
+        run: |          
+          docker tag processmaker/enterprise:${{env.IMAGE_TAG}} ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${{env.IMAGE_TAG}}
+          docker push ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${{env.IMAGE_TAG}}
   
   deployEKS:
     name: deploy-EKS
     if: contains(github.event.pull_request.body, 'ci:deploy')
-    #needs: imageEKS
+    needs: imageEKS
     runs-on: ${{ vars.RUNNER }}
     steps:
       - name: Checkout .github repo
@@ -158,27 +158,6 @@ jobs:
           instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
           echo "INSTANCE: $instance"
           echo "IMAGE_TAG: $IMAGE_TAG"
-          echo "RDS_ADMIN_USERNAME: $RDS_ADMIN_USERNAME"
-          echo "RDS_ADMIN_PASSWORD: $RDS_ADMIN_PASSWORD"
-          echo "KEYCLOAK_CLIENT_SECRET: $KEYCLOAK_CLIENT_SECRET"
-          echo "KEYCLOAK_PASSWORD: $KEYCLOAK_PASSWORD"
-          echo "CUSTOMER_LICENSES_PAT: $CUSTOMER_LICENSES_PAT"
-          
-          # Debug: Check if files exist and show their content before sed
-          echo "=== Checking files before sed operations ==="
-          ls -la .github/templates/
-          echo "=== instance.yaml content before sed ==="
-          cat .github/templates/instance.yaml
-          echo "=== db.yaml content before sed ==="
-          cat .github/templates/db.yaml
-          
-          # Debug: Check if the patterns exist in the files
-          echo "=== Checking if patterns exist in files ==="
-          grep -n "{{MYSQL_USER}}" .github/templates/instance.yaml || echo "{{MYSQL_USER}} not found in instance.yaml"
-          grep -n "{{MYSQL_PASSWORD}}" .github/templates/instance.yaml || echo "{{MYSQL_PASSWORD}} not found in instance.yaml"
-          grep -n "{{MYSQL_USERNAME}}" .github/templates/db.yaml || echo "{{MYSQL_USERNAME}} not found in db.yaml"
-          grep -n "{{MYSQL_PASSWORD}}" .github/templates/db.yaml || echo "{{MYSQL_PASSWORD}} not found in db.yaml"
-          
           sed -i "s#{{INSTANCE}}#$instance#g" .github/scripts/deploy-instance.sh
           sed -i "s#{{INSTANCE}}#$instance#g" .github/templates/instance.yaml
           sed -i "s#{{INSTANCE}}#$instance#g" .github/templates/db.yaml
@@ -190,14 +169,6 @@ jobs:
           sed -i "s#{{MYSQL_PASSWORD}}#$RDS_ADMIN_PASSWORD#g" .github/templates/instance.yaml
           sed -i "s#{{MYSQL_USERNAME}}#$RDS_ADMIN_USERNAME#g" .github/templates/db.yaml
           sed -i "s#{{MYSQL_PASSWORD}}#$RDS_ADMIN_PASSWORD#g" .github/templates/db.yaml
-          
-          # Debug: Check if sed commands actually made changes
-          echo "=== Checking if patterns still exist after sed ==="
-          grep -n "{{MYSQL_USER}}" .github/templates/instance.yaml || echo "{{MYSQL_USER}} successfully replaced in instance.yaml"
-          grep -n "{{MYSQL_PASSWORD}}" .github/templates/instance.yaml || echo "{{MYSQL_PASSWORD}} successfully replaced in instance.yaml"
-          grep -n "{{MYSQL_USERNAME}}" .github/templates/db.yaml || echo "{{MYSQL_USERNAME}} successfully replaced in db.yaml"
-          grep -n "{{MYSQL_PASSWORD}}" .github/templates/db.yaml || echo "{{MYSQL_PASSWORD}} successfully replaced in db.yaml"
-          
           echo "=== Checking instance.yaml after replacements ==="
           cat .github/templates/instance.yaml
           echo "=== Checking db.yaml after replacements ==="
@@ -210,7 +181,7 @@ jobs:
 
   runAPITest:
     name: Run API Tests
-    #needs: [deployEKS]
+    needs: [deployEKS]
     if: contains(github.event.pull_request.body, 'ci:api-test')
     runs-on: ${{ vars.RUNNER }}
     steps:
@@ -317,7 +288,7 @@ jobs:
   runPhpUnit:
     name: run-phpunit
     if: github.event.action != 'closed'
-    #needs: imageEKS
+    needs: imageEKS
     runs-on: ${{ vars.RUNNER }}
     steps:
       - name: Checkout
