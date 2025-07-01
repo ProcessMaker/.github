@@ -281,7 +281,7 @@ jobs:
   runPhpUnit:
     name: run-phpunit
     if: github.event.action != 'closed'
-    needs: imageEKS
+    #needs: imageEKS
     runs-on: ${{ vars.RUNNER }}
     steps:
       - name: Checkout
