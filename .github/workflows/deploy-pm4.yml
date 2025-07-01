@@ -157,6 +157,22 @@ jobs:
           echo "KEYCLOAK_CLIENT_SECRET: $KEYCLOAK_CLIENT_SECRET"
           echo "KEYCLOAK_PASSWORD: $KEYCLOAK_PASSWORD"
           echo "CUSTOMER_LICENSES_PAT: $CUSTOMER_LICENSES_PAT"
+          
+          # Debug: Check if files exist and show their content before sed
+          echo "=== Checking files before sed operations ==="
+          ls -la .github/templates/
+          echo "=== instance.yaml content before sed ==="
+          cat .github/templates/instance.yaml
+          echo "=== db.yaml content before sed ==="
+          cat .github/templates/db.yaml
+          
+          # Debug: Check if the patterns exist in the files
+          echo "=== Checking if patterns exist in files ==="
+          grep -n "{{MYSQL_USER}}" .github/templates/instance.yaml || echo "{{MYSQL_USER}} not found in instance.yaml"
+          grep -n "{{MYSQL_PASSWORD}}" .github/templates/instance.yaml || echo "{{MYSQL_PASSWORD}} not found in instance.yaml"
+          grep -n "{{MYSQL_USERNAME}}" .github/templates/db.yaml || echo "{{MYSQL_USERNAME}} not found in db.yaml"
+          grep -n "{{MYSQL_PASSWORD}}" .github/templates/db.yaml || echo "{{MYSQL_PASSWORD}} not found in db.yaml"
+          
           sed -i "s#{{INSTANCE}}#$instance#g" .github/scripts/deploy-instance.sh
           sed -i "s#{{INSTANCE}}#$instance#g" .github/templates/instance.yaml
           sed -i "s#{{INSTANCE}}#$instance#g" .github/templates/db.yaml
@@ -168,6 +184,14 @@ jobs:
           sed -i "s#{{MYSQL_PASSWORD}}#$RDS_ADMIN_PASSWORD#g" .github/templates/instance.yaml
           sed -i "s#{{MYSQL_USERNAME}}#$RDS_ADMIN_USERNAME#g" .github/templates/db.yaml
           sed -i "s#{{MYSQL_PASSWORD}}#$RDS_ADMIN_PASSWORD#g" .github/templates/db.yaml
+          
+          # Debug: Check if sed commands actually made changes
+          echo "=== Checking if patterns still exist after sed ==="
+          grep -n "{{MYSQL_USER}}" .github/templates/instance.yaml || echo "{{MYSQL_USER}} successfully replaced in instance.yaml"
+          grep -n "{{MYSQL_PASSWORD}}" .github/templates/instance.yaml || echo "{{MYSQL_PASSWORD}} successfully replaced in instance.yaml"
+          grep -n "{{MYSQL_USERNAME}}" .github/templates/db.yaml || echo "{{MYSQL_USERNAME}} successfully replaced in db.yaml"
+          grep -n "{{MYSQL_PASSWORD}}" .github/templates/db.yaml || echo "{{MYSQL_PASSWORD}} successfully replaced in db.yaml"
+          
           echo "=== Checking instance.yaml after replacements ==="
           cat .github/templates/instance.yaml
           echo "=== Checking db.yaml after replacements ==="
