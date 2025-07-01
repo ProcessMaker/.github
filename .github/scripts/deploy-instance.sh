@@ -36,9 +36,11 @@ if ! kubectl get namespace/ci-{{INSTANCE}}-ns-pm4 >/dev/null 2>&1; then
     sed -i "s/{{MYSQL_PASSWORD}}/$RDS_ADMIN_PASSWORD/" .github/templates/instance.yaml
     sed -i "s/{{MYSQL_USER}}/$RDS_ADMIN_USERNAME/" .github/templates/instance.yaml
     cat .github/templates/instance.yaml
-    
+    # Evaluate the command and store the result
+    APP_VERSION=$(echo "$CI_PROJECT-$CI_PACKAGE_BRANCH" | sed "s;/;-;g" | sed "s/refs-heads-//g")
+
     helm install --timeout 75m -f .github/templates/instance.yaml ci-{{INSTANCE}} processmaker/enterprise \
-        --set deploy.pmai.openaiApiKey=${OPEN_AI_API_KEY} \
+        --set deploy.pmai.openaiApiKey=${OPENAI_API_KEY} \
         --set analytics.awsAccessKey=${ANALYTICS_AWS_ACCESS_KEY} \
         --set analytics.awsSecretKey=${ANALYTICS_AWS_SECRET_KEY} \
         --set dockerRegistry.password=${REGISTRY_PASSWORD} \
@@ -46,6 +48,7 @@ if ! kubectl get namespace/ci-{{INSTANCE}}-ns-pm4 >/dev/null 2>&1; then
         --set dockerRegistry.username=${REGISTRY_USERNAME} \
         --set twilio.sid=${TWILIO_SID} \
         --set twilio.token=${TWILIO_TOKEN} \
+        --set appVersion=${APP_VERSION} \
         --version ${versionHelm}
 else
     echo "Instance exists. Running upgrade and bouncing pods"
