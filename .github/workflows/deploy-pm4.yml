@@ -134,7 +134,8 @@ jobs:
           HELM_REPO: ${{ secrets.HELM_REPO }}
           HELM_USERNAME: ${{ secrets.HELM_USERNAME }}
           HELM_PASSWORD: ${{ secrets.HELM_PASSWORD }}
-          OPEN_AI_API_KEY: ${{ secrets.OPEN_AI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPEN_AI_SECRET: ${{ secrets.OPENAI_API_KEY }}
           ANALYTICS_AWS_ACCESS_KEY: ${{ secrets.ANALYTICS_AWS_ACCESS_KEY }}
           ANALYTICS_AWS_SECRET_KEY: ${{ secrets.ANALYTICS_AWS_SECRET_KEY }}
           REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
@@ -149,6 +150,8 @@ jobs:
           CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
           RDS_ADMIN_USERNAME: ${{ secrets.RDS_ADMIN_USERNAME }}
           RDS_ADMIN_PASSWORD: ${{ secrets.RDS_ADMIN_PASSWORD }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
           echo "INSTANCE: $instance"
