@@ -51,7 +51,6 @@ jobs:
 
       - name: Set image name
         run: |
-            RESOLVED_IMAGE_TAG=${{ env.IMAGE_TAG }}
             echo "IMAGE=${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:$RESOLVED_IMAGE_TAG" >> $GITHUB_ENV
       - name: Generate image EKS
         if: ${{ !contains(github.event.pull_request.body, 'ci:skip-build') }}
@@ -127,11 +126,6 @@ jobs:
       - name: Authenticate with Amazon EKS
         run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
       
-      - name: Resolve IMAGE_TAG
-        run: |
-          RESOLVED_IMAGE_TAG=$(echo "$CI_PROJECT-$CI_PACKAGE_BRANCH" | sed "s;/;-;g" | sed "s/refs-heads-//g")
-          echo "RESOLVED_IMAGE_TAG=$RESOLVED_IMAGE_TAG" >> $GITHUB_ENV
-          echo "IMAGE_TAG=$RESOLVED_IMAGE_TAG" >> $GITHUB_ENV
       
       - name: Deploy instance EKS
         env:
