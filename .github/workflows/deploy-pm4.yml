@@ -18,6 +18,7 @@ env:
   CI_PACKAGE_BRANCH: ${{ github.event.pull_request.head.ref || github.event.ref || 'develop' }}
   CI_PROJECT: ${{github.event.pull_request.head.repo.name || github.event.repository.name || 'processmaker' }}
   CI_PR_BODY: ${{ github.event_name == 'schedule' && 'No ci tags needed here' || github.event.pull_request.body }}
+  IMAGE_TAG: $(echo "$CI_PROJECT-$CI_PACKAGE_BRANCH" | sed "s;/;-;g" | sed "s/refs-heads-//g")
   DEPLOY: ${{ secrets.DEPLOY }}
   GH_USER: ${{ secrets.GH_USER }}
   GH_EMAIL: ${{ secrets.GH_EMAIL }}
