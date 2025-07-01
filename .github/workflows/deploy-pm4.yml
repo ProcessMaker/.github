@@ -178,6 +178,11 @@ jobs:
           echo "RDS_ADMIN_USERNAME length: ${#RDS_ADMIN_USERNAME}"
           echo "=== Checking if MYSQL_USER placeholder exists in instance.yaml ==="
           grep -n "MYSQL_USER" .github/templates/instance.yaml || echo "No MYSQL_USER found"
+          echo "=== Checking what MYSQL_USER variable contains ==="
+          echo "MYSQL_USER value: '$MYSQL_USER'"
+          echo "MYSQL_USER length: ${#MYSQL_USER}"
+          echo "=== Checking if there are any other MYSQL_USER references ==="
+          env | grep -i mysql || echo "No MYSQL environment variables found"
           chmod +x .github/scripts/deploy-instance.sh
           bash .github/scripts/deploy-instance.sh
           export INSTANCE_URL="https://ci-$instance.engk8s.processmaker.net"
