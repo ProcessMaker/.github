@@ -167,6 +167,17 @@ jobs:
           cat .github/templates/instance.yaml
           echo "=== Checking db.yaml after replacements ==="
           cat .github/templates/db.yaml
+          echo "=== Checking if db.yaml contains MYSQL_USERNAME placeholder ==="
+          grep -n "MYSQL_USERNAME" .github/templates/db.yaml || echo "No MYSQL_USERNAME found"
+          echo "=== Checking if db.yaml contains CREATE USER ==="
+          grep -n "CREATE USER" .github/templates/db.yaml || echo "No CREATE USER found"
+          echo "=== Checking if db.yaml contains GRANT ==="
+          grep -n "GRANT" .github/templates/db.yaml || echo "No GRANT found"
+          echo "=== Debugging RDS_ADMIN_USERNAME ==="
+          echo "RDS_ADMIN_USERNAME value: '$RDS_ADMIN_USERNAME'"
+          echo "RDS_ADMIN_USERNAME length: ${#RDS_ADMIN_USERNAME}"
+          echo "=== Checking if MYSQL_USER placeholder exists in instance.yaml ==="
+          grep -n "MYSQL_USER" .github/templates/instance.yaml || echo "No MYSQL_USER found"
           chmod +x .github/scripts/deploy-instance.sh
           bash .github/scripts/deploy-instance.sh
           export INSTANCE_URL="https://ci-$instance.engk8s.processmaker.net"
