@@ -47,7 +47,8 @@ if ! kubectl get namespace/ci-{{INSTANCE}}-ns-pm4 >/dev/null 2>&1; then
         --set dockerRegistry.url=${REGISTRY_HOST} \
         --set dockerRegistry.username=${REGISTRY_USERNAME} \
         --set twilio.sid=${TWILIO_SID} \
-        --set twilio.token=${TWILIO_TOKEN}
+        --set twilio.token=${TWILIO_TOKEN} \
+        --version ${versionHelm}
 else
     echo "Instance exists. Running upgrade and bouncing pods"
     helm upgrade --timeout 60m ci-{{INSTANCE}} processmaker/enterprise --version ${versionHelm}
