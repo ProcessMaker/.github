@@ -152,6 +152,11 @@ jobs:
           instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
           echo "INSTANCE: $instance"
           echo "IMAGE_TAG: $IMAGE_TAG"
+          echo "RDS_ADMIN_USERNAME: $RDS_ADMIN_USERNAME"
+          echo "RDS_ADMIN_PASSWORD: $RDS_ADMIN_PASSWORD"
+          echo "KEYCLOAK_CLIENT_SECRET: $KEYCLOAK_CLIENT_SECRET"
+          echo "KEYCLOAK_PASSWORD: $KEYCLOAK_PASSWORD"
+          echo "CUSTOMER_LICENSES_PAT: $CUSTOMER_LICENSES_PAT"
           sed -i "s#{{INSTANCE}}#$instance#g" .github/scripts/deploy-instance.sh
           sed -i "s#{{INSTANCE}}#$instance#g" .github/templates/instance.yaml
           sed -i "s#{{INSTANCE}}#$instance#g" .github/templates/db.yaml
