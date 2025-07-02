@@ -272,7 +272,10 @@ jobs:
             #Drop database
             deploy_db="\`pm4_ci-$INSTANCE\`"
             deploy_ai="\`pm4_ci-$INSTANCE_ai\`" 
-            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP DATABASE `$deploy_db`" -h ${{ secrets.RDS_ENG }}
+
+            # Drop the main database including any tenant databases
+            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -h ${{ secrets.RDS_ENG }} -N -e "SHOW DATABASES LIKE '${deploy_db}%'" | while read db; do mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -h ${{ secrets.RDS_ENG }} -e "DROP DATABASE IF EXISTS \\\`${db}\\\`"; done
+
             mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP DATABASE `$deploy_ai`" -h ${{ secrets.RDS_ENG }}
             mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP USER 'user_ci-$INSTANCE'@'%'" -h ${{ secrets.RDS_ENG }}
             mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP USER 'user_ci-$INSTANCE_ai'@'%'" -h ${{ secrets.RDS_ENG }}
