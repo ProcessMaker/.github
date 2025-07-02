@@ -10,7 +10,7 @@ appConfig:
   licenseGitToken: {{CUSTOMER_LICENSES_PAT}}
 deploy:
   pmai:
-    openaiHost: pmai-svc.{{pmai-system}}.svc.cluster.local
+    openaiHost: pmai-svc.pmai-system.svc.cluster.local
     deployDb: false
     dbHost: pm4-eng-stm-rds-cluster.cluster-ckz0mnb6cuna.us-east-1.rds.amazonaws.com
     dbName: pm4_ci-{{INSTANCE}}_ai
