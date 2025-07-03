@@ -271,7 +271,12 @@ jobs:
             kubectl delete namespace ci-$INSTANCE-ns-pm4
             #Drop database
             deploy_db="pm4_ci-${INSTANCE}%"
-            deploy_ai="\`pm4_ci-$INSTANCE_ai\`" 
+            deploy_ai="\`pm4_ci-$INSTANCE_ai\`"
+
+            # check that that string length of $deploy_db is greater than 10 as a safety check. If its less than 12, exit now
+            if [ ${#deploy_db} -lt 12 ]; then
+              exit 1
+            fi
 
             # Drop the main database including any tenant databases
             mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -h ${{ secrets.RDS_ENG }} -N -e "SHOW DATABASES LIKE '${deploy_db}'" | xargs -I{} mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -h ${{ secrets.RDS_ENG }} -e "DROP DATABASE IF EXISTS \`{}\`;"
