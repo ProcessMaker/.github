@@ -173,7 +173,11 @@ jobs:
           cat .github/templates/db.yaml
           chmod +x .github/scripts/deploy-instance.sh
           bash .github/scripts/deploy-instance.sh
-          export INSTANCE_URL="https://ci-$instance.engk8s.processmaker.net"
+          if [ "$MULTITENANCY" = "true" ]; then
+            export INSTANCE_URL="https://tenant-1.ci-$instance.engk8s.processmaker.net"
+          else
+            export INSTANCE_URL="https://ci-$instance.engk8s.processmaker.net"
+          fi
           echo "Instance URL: $INSTANCE_URL"
           bash .github/scripts/gh_comment.sh "$CI_PROJECT" "$pull_req_id"
 
