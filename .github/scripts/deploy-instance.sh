@@ -61,6 +61,10 @@ else
     kubectl delete pod $webPod $schedulerPod $queuePod -n ci-{{INSTANCE}}-ns-pm4
 fi
 
-export INSTANCE_URL=https://ci-{{INSTANCE}}$DOM_EKS
+if [ "$MULTITENANCY" = "true" ]; then
+    export INSTANCE_URL="https://tenant-1.ci-{{INSTANCE}}$DOM_EKS"
+else
+    export INSTANCE_URL="https://ci-{{INSTANCE}}$DOM_EKS"
+fi
 echo "INSTANCE_URL=${INSTANCE_URL}" >> "$GITHUB_ENV"
 ./pm4-k8s-distribution/images/pm4-tools/pm wait-for-instance-ready
