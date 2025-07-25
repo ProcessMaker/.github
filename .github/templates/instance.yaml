@@ -1,7 +1,7 @@
 appVersion: {{IMAGE_TAG}}
 eksCluster: pm4-eng
 appConfig:
-  https: false
+  https: true
   subdomain: .engk8s.processmaker.net
   customSecurityPolicy: true
   customSecurityPolicyUrl: 'https://adobexdplatform.com https://*.quicksight.aws.amazon.com https://www.canva.com https://excalidraw.com https://www.figma.com https://flocus.com https://www.framer.com https://giphy.com https://lookerstudio.google.com https://maps.google.com https://docs.google.com https://www.loom.com https://miro.com https://mixpanel.com https://pitch.com https://prezi.com https://www.sketch.com https://www.slideshare.net https://supademo.com https://www.tableau.com https://forms.app https://vimeo.com https://www.youtube.com'
@@ -14,7 +14,7 @@ deploy:
     deployDb: false
     dbHost: pm4-eng-stm-rds-cluster.cluster-ckz0mnb6cuna.us-east-1.rds.amazonaws.com
     dbName: pm4_ci-{{INSTANCE}}_ai
-    dbUsername: user_ci-{{INSTANCE}}_ai
+    dbUsername: {{MYSQL_USER}}
     dbPassword: {{MYSQL_PASSWORD}}
   volumes:
     storageClassName: 'efs-sc'
@@ -30,7 +30,7 @@ database:
   deploy: false
   host: pm4-eng-stm-rds-cluster.cluster-ckz0mnb6cuna.us-east-1.rds.amazonaws.com
   name: pm4_ci-{{INSTANCE}}
-  username: user_ci-{{INSTANCE}}
+  username: {{MYSQL_USER}}
   password: {{MYSQL_PASSWORD}}
 analytics:
   awsRegion: us-east-1
@@ -55,6 +55,8 @@ cdata:
     slack: 4643444B5541535544424141454E545041325246353431324354303100000000000000000000000050524F434553534D00004635523734413735455A32360000
     gmail: 4431444B5541535544424141454E545041325246353431324354303100000000000000000000000050524F434553534D00005356434441465847303144570000
     api: 4641444B5541535544424141454E545041325246353431324354303100000000000000000000000050524F434553534D00004750533442365456343939530000
+multitenancy:
+  enable: {{MULTITENANCY}}
 microservices:
   scriptExecutor:
     enable: true

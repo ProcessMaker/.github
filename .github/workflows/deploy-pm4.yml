@@ -25,6 +25,7 @@ env:
   DOM_EKS: ${{ secrets.DOM_EKS }}
   GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
   BUILD_BASE: ${{ (contains(github.event.pull_request.body, 'ci:build-base') || github.event_name == 'schedule') && '1' || '0' }}
+  MULTITENANCY: ${{ (contains(github.event.pull_request.body, 'ci:multitenancy')) && 'true' || 'false' }}
   BASE_IMAGE: ${{ secrets.REGISTRY_HOST }}/processmaker/processmaker:base
   CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
   # K8S_BRANCH: ${{ contains(github.event.pull_request.body, 'ci:next') && 'next' || 'release-2024-fall' }}
@@ -50,9 +51,9 @@ jobs:
 
       - name: Set image name
         run: |
-            RESOLVED_IMAGE_TAG=${{ env.IMAGE_TAG }}
             echo "IMAGE=${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:$RESOLVED_IMAGE_TAG" >> $GITHUB_ENV
       - name: Generate image EKS
+        if: ${{ !contains(github.event.pull_request.body, 'ci:skip-build') }}
         run: |
           cd pm4-k8s-distribution/images
           export CI_RELEASE_BRANCH=$RELEASE_BRANCH
@@ -80,6 +81,7 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
       - name: Push Enterprise Image to Harbor
+        if: ${{ !contains(github.event.pull_request.body, 'ci:skip-build') }}
         run: |          
           docker tag processmaker/enterprise:${{env.IMAGE_TAG}} ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${{env.IMAGE_TAG}}
           docker push ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${{env.IMAGE_TAG}}
@@ -94,6 +96,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: processmaker/.github
+          ref: multitenancy
 
       - name: Common 
         uses: ./.github/actions/common
@@ -123,6 +126,7 @@ jobs:
       - name: Authenticate with Amazon EKS
         run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
       
+      
       - name: Deploy instance EKS
         env:
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
@@ -130,7 +134,8 @@ jobs:
           HELM_REPO: ${{ secrets.HELM_REPO }}
           HELM_USERNAME: ${{ secrets.HELM_USERNAME }}
           HELM_PASSWORD: ${{ secrets.HELM_PASSWORD }}
-          OPEN_AI_API_KEY: ${{ secrets.OPEN_AI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPEN_AI_SECRET: ${{ secrets.OPENAI_API_KEY }}
           ANALYTICS_AWS_ACCESS_KEY: ${{ secrets.ANALYTICS_AWS_ACCESS_KEY }}
           ANALYTICS_AWS_SECRET_KEY: ${{ secrets.ANALYTICS_AWS_SECRET_KEY }}
           REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
@@ -143,18 +148,37 @@ jobs:
           KEYCLOAK_CLIENT_SECRET: ${{ secrets.KEYCLOAK_CLIENT_SECRET }}
           KEYCLOAK_PASSWORD: ${{ secrets.KEYCLOAK_PASSWORD }}
           CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
+          RDS_ADMIN_USERNAME: ${{ secrets.RDS_ADMIN_USERNAME }}
+          RDS_ADMIN_PASSWORD: ${{ secrets.RDS_ADMIN_PASSWORD }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
-          sed -i 's/{{INSTANCE}}/'"$instance"'/g' .github/scripts/deploy-instance.sh
-          sed -i 's/{{INSTANCE}}/'"$instance"'/g' .github/templates/instance.yaml
-          sed -i 's/{{INSTANCE}}/'"$instance"'/g' .github/templates/db.yaml
-          sed -i 's/{{IMAGE_TAG}}/'"${{env.IMAGE_TAG}}"'/g' .github/templates/instance.yaml
-          sed -i 's/{{KEYCLOAK_CLIENT_SECRET}}/'"${{env.KEYCLOAK_CLIENT_SECRET}}"'/g' .github/templates/instance.yaml
-          sed -i 's/{{KEYCLOAK_PASSWORD}}/'"${{env.KEYCLOAK_PASSWORD}}"'/g' .github/templates/instance.yaml
-          sed -i 's/{{CUSTOMER_LICENSES_PAT}}/'"${{env.CUSTOMER_LICENSES_PAT}}"'/g' .github/templates/instance.yaml
+          echo "INSTANCE: $instance"
+          echo "IMAGE_TAG: $IMAGE_TAG"
+          sed -i "s#{{INSTANCE}}#$instance#g" .github/scripts/deploy-instance.sh
+          sed -i "s#{{INSTANCE}}#$instance#g" .github/templates/instance.yaml
+          sed -i "s#{{INSTANCE}}#$instance#g" .github/templates/db.yaml
+          sed -i "s#{{IMAGE_TAG}}#$IMAGE_TAG#g" .github/templates/instance.yaml
+          sed -i "s#{{KEYCLOAK_CLIENT_SECRET}}#$KEYCLOAK_CLIENT_SECRET#g" .github/templates/instance.yaml
+          sed -i "s#{{KEYCLOAK_PASSWORD}}#$KEYCLOAK_PASSWORD#g" .github/templates/instance.yaml
+          sed -i "s#{{CUSTOMER_LICENSES_PAT}}#$CUSTOMER_LICENSES_PAT#g" .github/templates/instance.yaml
+          sed -i "s#{{MYSQL_USER}}#$RDS_ADMIN_USERNAME#g" .github/templates/instance.yaml
+          sed -i "s#{{MYSQL_PASSWORD}}#$RDS_ADMIN_PASSWORD#g" .github/templates/instance.yaml
+          sed -i "s#{{MULTITENANCY}}#$MULTITENANCY#g" .github/templates/instance.yaml
+          sed -i "s#{{MYSQL_USERNAME}}#$RDS_ADMIN_USERNAME#g" .github/templates/db.yaml
+          sed -i "s#{{MYSQL_PASSWORD}}#$RDS_ADMIN_PASSWORD#g" .github/templates/db.yaml
+          echo "=== Checking instance.yaml after replacements ==="
+          cat .github/templates/instance.yaml
+          echo "=== Checking db.yaml after replacements ==="
+          cat .github/templates/db.yaml
           chmod +x .github/scripts/deploy-instance.sh
           bash .github/scripts/deploy-instance.sh
-          export INSTANCE_URL="https://ci-$instance.engk8s.processmaker.net"
+          if [ "$MULTITENANCY" = "true" ]; then
+            export INSTANCE_URL="https://tenant-1.ci-$instance.engk8s.processmaker.net"
+          else
+            export INSTANCE_URL="https://ci-$instance.engk8s.processmaker.net"
+          fi
           echo "Instance URL: $INSTANCE_URL"
           bash .github/scripts/gh_comment.sh "$CI_PROJECT" "$pull_req_id"
 
@@ -251,12 +275,20 @@ jobs:
             helm delete ci-$INSTANCE
             kubectl delete namespace ci-$INSTANCE-ns-pm4
             #Drop database
-            deploy_db="\`pm4_ci-$INSTANCE\`"
-            deploy_ai="\`pm4_ci-$INSTANCE_ai\`" 
-            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP DATABASE $deploy_db" -h ${{ secrets.RDS_ENG }}
-            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP DATABASE $deploy_ai" -h ${{ secrets.RDS_ENG }}
-            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP USER 'user_ci-$INSTANCE'@'%'" -h ${{ secrets.RDS_ENG }}
-            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP USER 'user_ci-$INSTANCE_ai'@'%'" -h ${{ secrets.RDS_ENG }}
+            deploy_db="pm4_ci-${INSTANCE}%"
+            deploy_ai="\`pm4_ci-$INSTANCE_ai\`"
+
+            # check that that string length of $deploy_db is 12 or more as a safety check. If its less than 12, exit now
+            if [ ${#deploy_db} -lt 12 ]; then
+              exit 1
+            fi
+
+            # Drop the main database including any tenant databases
+            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -h ${{ secrets.RDS_ENG }} -N -e "SHOW DATABASES LIKE '${deploy_db}'" | xargs -I{} mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -h ${{ secrets.RDS_ENG }} -e "DROP DATABASE IF EXISTS \`{}\`;"
+
+            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP DATABASE IF EXISTS $deploy_ai" -h ${{ secrets.RDS_ENG }}
+            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP USER IF EXISTS 'user_ci-$INSTANCE'@'%'" -h ${{ secrets.RDS_ENG }}
+            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP USER IF EXISTS 'user_ci-$INSTANCE_ai'@'%'" -h ${{ secrets.RDS_ENG }}
             #Drop image Harbor        
             curl -X DELETE -u ${{ secrets.REGISTRY_USERNAME }}:${{ secrets.REGISTRY_PASSWORD }} "https://${{ secrets.REGISTRY_HOST }}/api/v2.0/projects/processmaker/repositories/enterprise/artifacts/${{env.IMAGE_TAG}}"
             echo "The instance [https://ci-$INSTANCE.engk8s.processmaker.net] was deleted!!"
