@@ -274,12 +274,13 @@ jobs:
     steps:
       - name: Delete instance EKS
         run: |           
-          # If inputs.delete does not equal 'false', set the INSTANCE to the value of inputs.delete
+          # If inputs.delete does not equal 'false', set the IMAGE_TAG to the value of inputs.delete
           if [ "${{ inputs.delete }}" != "false" ]; then
-            INSTANCE=${{ inputs.delete }}
+            IMAGE_TAG=${{ inputs.delete }}
           else
-            INSTANCE=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
+            IMAGE_TAG=${{ env.IMAGE_TAG }}
           fi
+          INSTANCE=$(echo -n $IMAGE_TAG | md5sum | head -c 10)
           if kubectl get namespace/ci-$INSTANCE-ns-pm4 ; then
             echo "Deleting Instace :: ci-$INSTANCE"
             helm delete ci-$INSTANCE
@@ -300,7 +301,7 @@ jobs:
             mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP USER IF EXISTS 'user_ci-$INSTANCE'@'%'" -h ${{ secrets.RDS_ENG }}
             mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP USER IF EXISTS 'user_ci-$INSTANCE_ai'@'%'" -h ${{ secrets.RDS_ENG }}
             #Drop image Harbor        
-            curl -X DELETE -u ${{ secrets.REGISTRY_USERNAME }}:${{ secrets.REGISTRY_PASSWORD }} "https://${{ secrets.REGISTRY_HOST }}/api/v2.0/projects/processmaker/repositories/enterprise/artifacts/${{env.IMAGE_TAG}}"
+            curl -X DELETE -u ${{ secrets.REGISTRY_USERNAME }}:${{ secrets.REGISTRY_PASSWORD }} "https://${{ secrets.REGISTRY_HOST }}/api/v2.0/projects/processmaker/repositories/enterprise/artifacts/${IMAGE_TAG}"
             echo "The instance [https://ci-$INSTANCE.engk8s.processmaker.net] was deleted!!"
           else
             echo "The pull request does not have an instance on K8s [https://ci-$INSTANCE.engk8s.processmaker.net] not found!!"
