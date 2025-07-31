@@ -6,6 +6,11 @@ on:
   #schedule:
   #  - cron: '30 2 * * *'  # run daily
   workflow_dispatch:
+    inputs:
+      delete:
+        description: 'CI Instance ID to delete. If present, all other jobs will be skipped.'
+        required: false
+        default: 'false'
   workflow_call:
 env:
   aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -35,7 +40,7 @@ concurrency:
 jobs:
   imageEKS:
     name: build-docker-image-EKS
-    if: github.event.action != 'closed'
+    if: github.event.action != 'closed' && inputs.delete == 'false'
     runs-on: ${{ vars.RUNNER }}
     steps:
 
@@ -264,12 +269,17 @@ jobs:
                "${URL}"
   deleteEKS:
     name: Delete Instance
-    if: github.event.action == 'closed'
+    if: github.event.action == 'closed' || inputs.delete != 'false'
     runs-on: self-hosted
     steps:
       - name: Delete instance EKS
         run: |           
-          INSTANCE=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
+          # If inputs.delete does not equal 'false', set the INSTANCE to the value of inputs.delete
+          if [ "${{ inputs.delete }}" != "false" ]; then
+            INSTANCE=${{ inputs.delete }}
+          else
+            INSTANCE=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
+          fi
           if kubectl get namespace/ci-$INSTANCE-ns-pm4 ; then
             echo "Deleting Instace :: ci-$INSTANCE"
             helm delete ci-$INSTANCE
@@ -298,7 +308,7 @@ jobs:
 
   runPhpUnit:
     name: run-phpunit
-    if: github.event.action != 'closed'
+    if: github.event.action != 'closed' && inputs.delete == 'false'
     needs: imageEKS
     runs-on: ${{ vars.RUNNER }}
     steps:
