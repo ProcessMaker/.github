@@ -274,8 +274,8 @@ jobs:
     steps:
       - name: Delete instance EKS
         run: |           
-          # If inputs.delete is present, set the INSTANCE to the value of delete
-          if [ -n "${{ inputs.delete }}" ]; then
+          # If inputs.delete does not equal 'false', set the INSTANCE to the value of inputs.delete
+          if [ "${{ inputs.delete }}" != "false" ]; then
             INSTANCE=${{ inputs.delete }}
           else
             INSTANCE=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
