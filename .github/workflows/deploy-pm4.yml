@@ -10,7 +10,7 @@ on:
       delete:
         description: 'CI Instance ID to delete. If present, all other jobs will be skipped.'
         required: false
-        default: 'false'
+        default: ''
   workflow_call:
 env:
   aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -38,37 +38,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.delete }}
   cancel-in-progress: true
 jobs:
-  debug:
-    name: Debug Workflow Context
-    runs-on: ${{ vars.RUNNER }}
-    steps:
-      - name: Debug Information
-        run: |
-          echo "=== Workflow Debug Information ==="
-          echo "Event name: ${{ github.event_name }}"
-          echo "Event action: ${{ github.event.action }}"
-          echo "Inputs.delete value: '${{ inputs.delete }}'"
-          echo "Inputs.delete type: $(echo '${{ inputs.delete }}' | jq -R type)"
-          echo "Inputs.delete length: $(echo '${{ inputs.delete }}' | wc -c)"
-          echo "PR number: ${{ github.event.pull_request.number }}"
-          echo "PR state: ${{ github.event.pull_request.state }}"
-          echo "Workflow run ID: ${{ github.run_id }}"
-          echo "Actor: ${{ github.actor }}"
-          echo "Repository: ${{ github.repository }}"
-          echo "Ref: ${{ github.ref }}"
-          echo "SHA: ${{ github.sha }}"
-          echo "=== Condition Evaluation ==="
-          echo "github.event.action == 'closed': ${{ github.event.action == 'closed' }}"
-          echo "inputs.delete != 'false': ${{ inputs.delete != 'false' }}"
-          echo "inputs.delete != '': ${{ inputs.delete != '' }}"
-          echo "Full condition: ${{ github.event.action == 'closed' || (inputs.delete != 'false' && inputs.delete != '') }}"
-          echo "=== Environment Variables ==="
-          echo "IMAGE_TAG: ${{ env.IMAGE_TAG }}"
-          echo "CI_PACKAGE_BRANCH: ${{ env.CI_PACKAGE_BRANCH }}"
-          echo "CI_PROJECT: ${{ env.CI_PROJECT }}"
   imageEKS:
     name: build-docker-image-EKS
-    if: github.event.action != 'closed' && inputs.delete == 'false'
+    if: github.event.action != 'closed' && inputs.delete == ''
     runs-on: ${{ vars.RUNNER }}
     steps:
 
@@ -297,13 +269,13 @@ jobs:
                "${URL}"
   deleteEKS:
     name: Delete Instance
-    if: github.event.action == 'closed' || inputs.delete != 'false'
+    if: github.event.action == 'closed' || inputs.delete != ''
     runs-on: self-hosted
     steps:
       - name: Delete instance EKS
         run: |           
-          # If inputs.delete does not equal 'false', set the IMAGE_TAG to the value of inputs.delete
-          if [ "${{ inputs.delete }}" != "false" ]; then
+          # If inputs.delete does not equal '', set the IMAGE_TAG to the value of inputs.delete
+          if [ "${{ inputs.delete }}" != "" ]; then
             IMAGE_TAG=${{ inputs.delete }}
           else
             IMAGE_TAG=${{ env.IMAGE_TAG }}
@@ -337,7 +309,7 @@ jobs:
 
   runPhpUnit:
     name: run-phpunit
-    if: github.event.action != 'closed' && inputs.delete == 'false'
+    if: github.event.action != 'closed' && inputs.delete == ''
     needs: imageEKS
     runs-on: ${{ vars.RUNNER }}
     steps:
