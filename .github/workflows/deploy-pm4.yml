@@ -101,7 +101,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: processmaker/.github
-          ref: multitenancy
+          ref: main
 
       - name: Common 
         uses: ./.github/actions/common
