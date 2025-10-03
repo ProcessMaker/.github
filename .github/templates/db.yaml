@@ -16,12 +16,6 @@ spec:
             # Create databases
             CREATE DATABASE IF NOT EXISTS \`pm4_ci-{{INSTANCE}}\`;
             CREATE DATABASE IF NOT EXISTS \`pm4_ci-{{INSTANCE}}_ai\`;
-            # Create User
-            CREATE USER IF NOT EXISTS '{{MYSQL_USERNAME}}'@'%' IDENTIFIED BY '{{MYSQL_PASSWORD}}';
-            # Grant permissions to admin user (no need to create instance-specific users for multitenancy)
-            GRANT ALL PRIVILEGES ON \`pm4_ci-{{INSTANCE}}\`.* TO '{{MYSQL_USERNAME}}'@'%';
-            GRANT ALL PRIVILEGES ON \`pm4_ci-{{INSTANCE}}_ai\`.* TO '{{MYSQL_USERNAME}}'@'%';
-            FLUSH PRIVILEGES;
             # Output the created resources
             SELECT CONCAT('Created database: pm4_', 'ci-{{INSTANCE}}') AS setup_info;
             SELECT CONCAT('Created database: pm4_', 'ci-{{INSTANCE}}', '_ai') AS setup_info;
