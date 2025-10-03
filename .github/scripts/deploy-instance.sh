@@ -11,10 +11,11 @@ if ! kubectl get namespace/ci-{{INSTANCE}}-ns-pm4 >/dev/null 2>&1; then
     # Use admin password from secrets
     echo "Update instance yamls"
     
-    export RDS_ADMIN_PASSWORD=$RDS_ADMIN_PASSWORD
-    export RDS_ADMIN_USERNAME=$RDS_ADMIN_USERNAME
-    sed -i "s/{{MYSQL_USERNAME}}/$RDS_ADMIN_USERNAME/" .github/templates/db.yaml
-    sed -i "s/{{MYSQL_PASSWORD}}/$RDS_ADMIN_PASSWORD/" .github/templates/db.yaml
+    # Remove these lines - they're already done in the workflow
+    # export RDS_ADMIN_PASSWORD=$RDS_ADMIN_PASSWORD
+    # export RDS_ADMIN_USERNAME=$RDS_ADMIN_USERNAME
+    # sed -i "s/{{MYSQL_USERNAME}}/$RDS_ADMIN_USERNAME/" .github/templates/db.yaml
+    # sed -i "s/{{MYSQL_PASSWORD}}/$RDS_ADMIN_PASSWORD/" .github/templates/db.yaml
     echo "Creating DB :: pm4_ci-{{INSTANCE}}"
     cat .github/templates/db.yaml
     kubectl apply -f .github/templates/db.yaml --v=4
@@ -33,8 +34,9 @@ if ! kubectl get namespace/ci-{{INSTANCE}}-ns-pm4 >/dev/null 2>&1; then
     echo "Removing Job"
     kubectl delete job mysql-setup-job-ci-{{INSTANCE}}
     echo "Deploying Instance :: ci-{{INSTANCE}}"
-    sed -i "s/{{MYSQL_PASSWORD}}/$RDS_ADMIN_PASSWORD/" .github/templates/instance.yaml
-    sed -i "s/{{MYSQL_USER}}/$RDS_ADMIN_USERNAME/" .github/templates/instance.yaml
+    # Remove these lines - they're already done in the workflow
+    # sed -i "s/{{MYSQL_PASSWORD}}/$RDS_ADMIN_PASSWORD/" .github/templates/instance.yaml
+    # sed -i "s/{{MYSQL_USER}}/$RDS_ADMIN_USERNAME/" .github/templates/instance.yaml
     cat .github/templates/instance.yaml
     # Evaluate the command and store the result
     APP_VERSION=$(echo "$CI_PROJECT-$CI_PACKAGE_BRANCH" | sed "s;/;-;g" | sed "s/refs-heads-//g")
