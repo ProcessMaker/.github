@@ -59,11 +59,15 @@ jobs:
             echo "IMAGE=${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:$RESOLVED_IMAGE_TAG" >> $GITHUB_ENV
       - name: Generate image EKS
         if: ${{ !contains(github.event.pull_request.body, 'ci:skip-build') }}
-        run: |
-          cd pm4-k8s-distribution/images
-          export CI_RELEASE_BRANCH=$RELEASE_BRANCH
-          branch=$(echo "${{ env.CI_PACKAGE_BRANCH }}" | sed 's/refs-heads-//g') tag=${{env.IMAGE_TAG}} bash build.k8s-cicd.sh
-          echo "VERSION=${{ env.IMAGE_TAG }}" >> $GITHUB_ENV
+        uses: nick-fields/retry@v3
+        with:
+          max_attempts: 3
+          timeout_minutes: 60
+          command: |
+            cd pm4-k8s-distribution/images
+            export CI_RELEASE_BRANCH=$RELEASE_BRANCH
+            branch=$(echo "${{ env.CI_PACKAGE_BRANCH }}" | sed 's/refs-heads-//g') tag=${{env.IMAGE_TAG}} bash build.k8s-cicd.sh
+            echo "VERSION=${{ env.IMAGE_TAG }}" >> $GITHUB_ENV
       - name: List Images
         run: |
           docker images
