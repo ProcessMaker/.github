@@ -219,12 +219,11 @@ jobs:
     runs-on: ${{ vars.RUNNER }}
     strategy:
       matrix:
-        site_number: ${{ (contains(github.event.pull_request.body, 'ci:multitenancy')) && fromJSON('[1, 2, 3]') || fromJSON('[1]') }}
+        site_number: ${{ env.MULTITENANCY == 'true' && fromJSON('[1, 2, 3]') || fromJSON('[1]') }}
       fail-fast: false
     env:
       SITE_NAME: CI${{ matrix.site_number }}
       INSTANCE: ${{ needs.deployEKS.outputs.instance }}
-      MULTITENANCY: $MULTITENANCY
       CONTEXT_PATH: ./services
       INSTANCE_PASSWORD: ${{ secrets.INSTANCE_PASSWORD }}
     steps:
