@@ -225,6 +225,7 @@ jobs:
       SITE_NAME: CI${{ matrix.site_number }}
       INSTANCE: ${{ needs.deployEKS.outputs.instance }}
       MULTITENANCY: ${{ needs.deployEKS.outputs.MULTITENANCY }}
+      CONTEXT_PATH: './services'
     steps:
       - name: Checkout testbench repo
         uses: actions/checkout@v4
@@ -234,10 +235,6 @@ jobs:
 
       - name: Run smoke test
         working-directory: testbench
-        env:
-          SITE_NAME: ${{ env.SITE_NAME }}
-          INSTANCE: ${{ env.INSTANCE }}
-          MULTITENANCY: ${{ env.MULTITENANCY }}
         run: docker compose up
 
   runAPITest:
