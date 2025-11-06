@@ -33,6 +33,7 @@ env:
   MULTITENANCY: ${{ (contains(github.event.pull_request.body, 'ci:multitenancy')) && 'true' || 'false' }}
   BASE_IMAGE: ${{ secrets.REGISTRY_HOST }}/processmaker/processmaker:base
   CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
+  NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
   # K8S_BRANCH: ${{ contains(github.event.pull_request.body, 'ci:next') && 'next' || 'release-2024-fall' }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.delete }}
@@ -240,6 +241,7 @@ jobs:
           echo "SITE_NAME=$SITE_NAME"
           echo "INSTANCE=$INSTANCE"
           echo "MULTITENANCY=$MULTITENANCY"
+          echo "NGROK_AUTHTOKEN=$NGROK_AUTHTOKEN"
           docker compose up --abort-on-container-exit --exit-code-from testbench
 
   runAPITest:
