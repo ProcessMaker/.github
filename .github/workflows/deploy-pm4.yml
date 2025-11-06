@@ -219,7 +219,7 @@ jobs:
     runs-on: ${{ vars.RUNNER }}
     strategy:
       matrix:
-        site_number: [1, 2, 3]
+        site_number: ${{ needs.deployEKS.outputs.MULTITENANCY == 'true' && fromJSON('[1, 2, 3]') || fromJSON('[1]') }}
       fail-fast: false
     env:
       SITE_NAME: CI${{ matrix.site_number }}
