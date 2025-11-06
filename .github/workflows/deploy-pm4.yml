@@ -195,7 +195,6 @@ jobs:
           fi
           echo "Instance URL: $INSTANCE_URL"
           bash .github/scripts/gh_comment.sh "$CI_PROJECT" "$pull_req_id"
-          echo "MULTITENANCY=$MULTITENANCY" >> $GITHUB_OUTPUT
 
   smoketest-prepare:
     name: Prepare Smoke Test
@@ -220,12 +219,12 @@ jobs:
     runs-on: ${{ vars.RUNNER }}
     strategy:
       matrix:
-        site_number: ${{ needs.deployEKS.outputs.MULTITENANCY == 'true' && fromJSON('[1, 2, 3]') || fromJSON('[1]') }}
+        site_number: ${{ env.MULTITENANCY == 'true' && fromJSON('[1, 2, 3]') || fromJSON('[1]') }}
       fail-fast: false
     env:
       SITE_NAME: CI${{ matrix.site_number }}
       INSTANCE: ${{ needs.deployEKS.outputs.instance }}
-      MULTITENANCY: ${{ needs.deployEKS.outputs.MULTITENANCY }}
+      MULTITENANCY: ${{ env.MULTITENANCY }}
       CONTEXT_PATH: ./services
       INSTANCE_PASSWORD: ${{ secrets.INSTANCE_PASSWORD }}
     steps:
