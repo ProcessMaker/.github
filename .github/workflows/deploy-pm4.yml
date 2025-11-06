@@ -225,7 +225,7 @@ jobs:
       SITE_NAME: CI${{ matrix.site_number }}
       INSTANCE: ${{ needs.deployEKS.outputs.instance }}
       MULTITENANCY: ${{ needs.deployEKS.outputs.MULTITENANCY }}
-      CONTEXT_PATH: './services'
+      CONTEXT_PATH: ./services
     steps:
       - name: Checkout testbench repo
         uses: actions/checkout@v4
@@ -235,7 +235,9 @@ jobs:
 
       - name: Run smoke test
         working-directory: testbench
-        run: docker compose up
+        run: |
+          echo "CONTEXT_PATH=$CONTEXT_PATH"
+          docker compose up
 
   runAPITest:
     name: Run API Tests
