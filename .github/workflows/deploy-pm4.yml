@@ -100,6 +100,8 @@ jobs:
     if: contains(github.event.pull_request.body, 'ci:deploy')
     needs: imageEKS
     runs-on: ${{ vars.RUNNER }}
+    outputs:
+      instance: ${{ steps.deploy.outputs.instance }}
     steps:
       - name: Checkout .github repo
         uses: actions/checkout@v4
@@ -137,6 +139,7 @@ jobs:
       
       
       - name: Deploy instance EKS
+        id: deploy
         env:
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
           CURRENT_DATE: ${{ env.CURRENT_DATE }}
@@ -163,6 +166,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
+          echo "instance=$instance" >> $GITHUB_OUTPUT
           echo "INSTANCE: $instance"
           echo "IMAGE_TAG: $IMAGE_TAG"
           sed -i "s#{{INSTANCE}}#$instance#g" .github/scripts/deploy-instance.sh
@@ -190,6 +194,48 @@ jobs:
           fi
           echo "Instance URL: $INSTANCE_URL"
           bash .github/scripts/gh_comment.sh "$CI_PROJECT" "$pull_req_id"
+
+  smoketest-prepare:
+    name: Prepare Smoke Test
+    needs: deployEKS
+    if: success()
+    runs-on: ${{ vars.RUNNER }}
+    steps:
+      - name: Checkout testbench repo
+        uses: actions/checkout@v4
+        with:
+          repository: ProcessMaker/testbench
+          path: testbench
+
+      - name: Build testbench
+        working-directory: testbench
+        run: docker compose build testbench
+
+  smoketest:
+    name: Smoke Test (CI${{ matrix.site_number }})
+    needs: [deployEKS, smoketest-prepare]
+    if: success()
+    runs-on: ${{ vars.RUNNER }}
+    strategy:
+      matrix:
+        site_number: [1, 2, 3]
+      fail-fast: false
+    env:
+      SITE_NAME: CI${{ matrix.site_number }}
+      INSTANCE: ${{ needs.deployEKS.outputs.instance }}
+    steps:
+      - name: Checkout testbench repo
+        uses: actions/checkout@v4
+        with:
+          repository: ProcessMaker/testbench
+          path: testbench
+
+      - name: Run smoke test
+        working-directory: testbench
+        env:
+          SITE_NAME: ${{ env.SITE_NAME }}
+          INSTANCE: ${{ env.INSTANCE }}
+        run: docker compose up
 
   runAPITest:
     name: Run API Tests
