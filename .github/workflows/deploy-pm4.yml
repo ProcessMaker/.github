@@ -194,6 +194,7 @@ jobs:
           fi
           echo "Instance URL: $INSTANCE_URL"
           bash .github/scripts/gh_comment.sh "$CI_PROJECT" "$pull_req_id"
+          echo "MULTITENANCY=$MULTITENANCY" >> $GITHUB_OUTPUT
 
   smoketest-prepare:
     name: Prepare Smoke Test
@@ -223,6 +224,7 @@ jobs:
     env:
       SITE_NAME: CI${{ matrix.site_number }}
       INSTANCE: ${{ needs.deployEKS.outputs.instance }}
+      MULTITENANCY: ${{ needs.deployEKS.outputs.MULTITENANCY }}
     steps:
       - name: Checkout testbench repo
         uses: actions/checkout@v4
@@ -235,6 +237,7 @@ jobs:
         env:
           SITE_NAME: ${{ env.SITE_NAME }}
           INSTANCE: ${{ env.INSTANCE }}
+          MULTITENANCY: ${{ env.MULTITENANCY }}
         run: docker compose up
 
   runAPITest:
