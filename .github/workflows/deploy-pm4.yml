@@ -237,7 +237,10 @@ jobs:
         working-directory: testbench
         run: |
           echo "CONTEXT_PATH=$CONTEXT_PATH"
-          docker compose up
+          echo "SITE_NAME=$SITE_NAME"
+          echo "INSTANCE=$INSTANCE"
+          echo "MULTITENANCY=$MULTITENANCY"
+          docker compose up --abort-on-container-exit --exit-code-from testbench
 
   runAPITest:
     name: Run API Tests
