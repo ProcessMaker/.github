@@ -227,6 +227,7 @@ jobs:
       INSTANCE: ${{ needs.deployEKS.outputs.instance }}
       MULTITENANCY: ${{ needs.deployEKS.outputs.MULTITENANCY }}
       CONTEXT_PATH: ./services
+      INSTANCE_PASSWORD: ${{ secrets.INSTANCE_PASSWORD }}
     steps:
       - name: Checkout testbench repo
         uses: actions/checkout@v4
