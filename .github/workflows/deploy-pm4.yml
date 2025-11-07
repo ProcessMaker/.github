@@ -103,6 +103,7 @@ jobs:
     runs-on: ${{ vars.RUNNER }}
     outputs:
       instance: ${{ steps.deploy.outputs.instance }}
+      multitenancy: ${{ steps.deploy.outputs.multitenancy }}
     steps:
       - name: Checkout .github repo
         uses: actions/checkout@v4
