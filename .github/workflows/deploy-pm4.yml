@@ -244,7 +244,8 @@ jobs:
           echo "INSTANCE=$INSTANCE"
           echo "MULTITENANCY=$MULTITENANCY"
           echo "NGROK_AUTHTOKEN=$NGROK_AUTHTOKEN"
-          docker compose up --abort-on-container-exit --exit-code-from testbench
+          echo "INSTANCE_PASSWORD=$INSTANCE_PASSWORD"
+          ./start.sh
 
   runAPITest:
     name: Run API Tests
