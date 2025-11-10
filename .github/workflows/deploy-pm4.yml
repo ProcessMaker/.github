@@ -236,6 +236,9 @@ jobs:
           repository: ProcessMaker/testbench
           path: testbench
 
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
+
       - name: Run smoke test
         working-directory: testbench
         run: |
