@@ -33,7 +33,6 @@ env:
   MULTITENANCY: ${{ (contains(github.event.pull_request.body, 'ci:multitenancy')) && 'true' || 'false' }}
   BASE_IMAGE: ${{ secrets.REGISTRY_HOST }}/processmaker/processmaker:base
   CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
-  NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
   # K8S_BRANCH: ${{ contains(github.event.pull_request.body, 'ci:next') && 'next' || 'release-2024-fall' }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.delete }}
@@ -246,9 +245,15 @@ jobs:
           echo "SITE_NAME=$SITE_NAME"
           echo "INSTANCE=$INSTANCE"
           echo "MULTITENANCY=$MULTITENANCY"
-          echo "NGROK_AUTHTOKEN=$NGROK_AUTHTOKEN"
           echo "INSTANCE_PASSWORD=$INSTANCE_PASSWORD"
           ./start.sh
+
+      - name: Upload Playwright test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.site_number }}
+          path: testbench/playwright-report/index.html
 
   runAPITest:
     name: Run API Tests
