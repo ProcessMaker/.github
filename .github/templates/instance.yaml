@@ -62,7 +62,7 @@ microservices:
     enable: true
     customExecutors: false
     baseUrl: https://script-microsvr-us-east-1.processmaker.net
-    version: v4.13.1
+    version: v4.15.0
     keycloakClientId: microservices
     keycloakClientSecret: {{KEYCLOAK_CLIENT_SECRET}}
     keycloakBaseUrl: https://sso-microsvr-us-east-1.processmaker.net/realms/master/protocol/openid-connect/token
