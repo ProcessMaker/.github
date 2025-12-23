@@ -28,7 +28,7 @@ env:
   GH_USER: ${{ secrets.GH_USER }}
   GH_EMAIL: ${{ secrets.GH_EMAIL }}
   DOM_EKS: ${{ secrets.DOM_EKS }}
-  GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   BUILD_BASE: ${{ (contains(github.event.pull_request.body, 'ci:build-base') || github.event_name == 'schedule') && '1' || '0' }}
   MULTITENANCY: ${{ (contains(github.event.pull_request.body, 'ci:multitenancy')) && 'true' || 'false' }}
   BASE_IMAGE: ${{ secrets.REGISTRY_HOST }}/processmaker/processmaker:base
