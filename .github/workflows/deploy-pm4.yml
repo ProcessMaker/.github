@@ -95,7 +95,7 @@ jobs:
         if: failure()
         run: |
           echo "=== Checking GitHub API rate limit status ==="
-          curl -I https://api.github.com
+          curl -I --header "Authorization: Bearer ${{ secrets.GIT_TOKEN }}" https://api.github.com
           echo ""
           echo "=== Rate limit check complete ==="
   
