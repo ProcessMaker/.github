@@ -358,15 +358,23 @@ jobs:
           docker compose run phpunit
           CONTAINER_ID=$(sudo docker ps -a | grep phpunit | awk '{print $1}')
           echo "Copying coverage report from PHP Unit Container: $CONTAINER_ID"
-          sudo docker cp $CONTAINER_ID:/opt/processmaker/coverage.xml coverage.xml
+          if sudo docker exec $CONTAINER_ID test -f /opt/processmaker/coverage.xml; then
+            sudo docker cp $CONTAINER_ID:/opt/processmaker/coverage.xml coverage.xml
+            echo "COVERAGE_EXISTS=true" >> $GITHUB_ENV
+          else
+            echo "coverage.xml not found in container, skipping coverage archive and SonarQube"
+            echo "COVERAGE_EXISTS=false" >> $GITHUB_ENV
+          fi
 
       - name: Archive code coverage
+        if: env.COVERAGE_EXISTS == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: code-coverage
           path: ./pm4-k8s-distribution/images/pm4-tools/coverage.xml
 
       - name: SonarQube Coverage Report
+        if: env.COVERAGE_EXISTS == 'true'
         uses: sonarsource/sonarqube-scan-action@master
         env:
           GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
