@@ -17,15 +17,13 @@ helm repo add processmaker "${HELM_REPO}" --username "${HELM_USERNAME}" --passwo
 
 if kubectl get namespace "${NAMESPACE}" &>/dev/null; then
   echo "Namespace ${NAMESPACE} already exists; cleaning up any existing release first."
-  helm uninstall "${RELEASE_NAME}" --namespace "${NAMESPACE}" 2>/dev/null || true
+  helm uninstall "${RELEASE_NAME}" 2>/dev/null || true
   kubectl delete namespace "${NAMESPACE}" --timeout=120s || true
   sleep 5
 fi
 
-kubectl create namespace "${NAMESPACE}"
 echo "Installing Helm release ${RELEASE_NAME}..."
 helm install --timeout 75m -f .github/templates/instance-perf.yaml "${RELEASE_NAME}" processmaker/enterprise \
-  --namespace "${NAMESPACE}" \
   --set deploy.pmai.openaiApiKey="${OPENAI_API_KEY}" \
   --set analytics.awsAccessKey="${ANALYTICS_AWS_ACCESS_KEY}" \
   --set analytics.awsSecretKey="${ANALYTICS_AWS_SECRET_KEY}" \
