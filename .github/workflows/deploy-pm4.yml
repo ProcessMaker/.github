@@ -314,6 +314,211 @@ jobs:
           else
             echo "The pull request does not have an instance on K8s [https://ci-$INSTANCE.engk8s.processmaker.net] not found!!"
           fi
+          # Performance test namespaces (safety net if perf job was cancelled)
+          for suffix in perf-baseline perf-update; do
+            ns="ci-${INSTANCE}-${suffix}-ns-pm4"
+            release="ci-${INSTANCE}-${suffix}"
+            if kubectl get namespace "$ns" &>/dev/null; then
+              echo "Deleting performance namespace: $ns"
+              helm uninstall "$release" --namespace "$ns" 2>/dev/null || true
+              kubectl delete namespace "$ns" --timeout=120s --ignore-not-found=true || true
+            fi
+          done
+
+  performanceTests:
+    name: performance-tests
+    if: github.event.action != 'closed' && inputs.delete == '' && contains(github.event.pull_request.body, 'ci:performance-tests')
+    needs: imageEKS
+    runs-on: ${{ vars.RUNNER }}
+    timeout-minutes: 90
+    steps:
+      - name: Checkout .github repo
+        uses: actions/checkout@v4
+        with:
+          repository: processmaker/.github
+          ref: main
+
+      - name: Common
+        uses: ./.github/actions/common
+        with:
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Install pm4-tools
+        run: |
+          echo "versionHelm=$(grep "version:" "pm4-k8s-distribution/charts/enterprise/Chart.yaml" | awk '{print $2}' | sed 's/\"//g')" >> $GITHUB_ENV
+          cd pm4-k8s-distribution/images/pm4-tools
+          composer install --no-interaction
+          cd ../..
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Set up kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Authenticate with Amazon EKS
+        run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
+
+      - name: Prepare performance test
+        id: perf_prep
+        run: |
+          INSTANCE=$(echo -n ${{ env.IMAGE_TAG }} | md5sum | head -c 10)
+          echo "instance=${INSTANCE}" >> $GITHUB_OUTPUT
+          echo "INSTANCE=${INSTANCE}" >> $GITHUB_ENV
+          echo "Instance ID: ${INSTANCE}"
+
+      - name: Substitute perf instance template (baseline)
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          sed -i "s#{{INSTANCE}}#${INSTANCE}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{APP_VERSION}}#develop#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{CUSTOMER_LICENSES_PAT}}#${{ secrets.CUSTOMER_LICENSES_PAT }}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{KEYCLOAK_CLIENT_SECRET}}#${{ secrets.KEYCLOAK_CLIENT_SECRET }}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{KEYCLOAK_PASSWORD}}#${{ secrets.KEYCLOAK_PASSWORD }}#g" .github/templates/instance-perf.yaml
+
+      - name: Create performance node group
+        run: |
+          export INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          chmod +x .github/scripts/create-perf-nodegroup.sh
+          .github/scripts/create-perf-nodegroup.sh
+
+      - name: Wait for performance node Ready
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          echo "Waiting for node with label performance=ci-${INSTANCE} to be Ready..."
+          for i in $(seq 1 30); do
+            READY=$(kubectl get nodes -l "performance=ci-${INSTANCE}" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+            if [ "$READY" = "True" ]; then
+              echo "Node is Ready."
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 20
+          done
+          kubectl get nodes -l "performance=ci-${INSTANCE}"
+
+      - name: Deploy baseline (develop) and verify
+        id: baseline
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          HELM_REPO: ${{ secrets.HELM_REPO }}
+          HELM_USERNAME: ${{ secrets.HELM_USERNAME }}
+          HELM_PASSWORD: ${{ secrets.HELM_PASSWORD }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANALYTICS_AWS_ACCESS_KEY: ${{ secrets.ANALYTICS_AWS_ACCESS_KEY }}
+          ANALYTICS_AWS_SECRET_KEY: ${{ secrets.ANALYTICS_AWS_SECRET_KEY }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+          REGISTRY_HOST: ${{ secrets.REGISTRY_HOST }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          TWILIO_SID: ${{ secrets.TWILIO_SID }}
+          TWILIO_TOKEN: ${{ secrets.TWILIO_TOKEN }}
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-baseline"
+          export RELEASE_NAME APP_VERSION=develop INSTANCE
+          export versionHelm="${{ env.versionHelm }}"
+          chmod +x .github/scripts/deploy-perf-instance.sh
+          .github/scripts/deploy-perf-instance.sh
+          BASE_URL="https://${RELEASE_NAME}.engk8s.processmaker.net"
+          echo "Checking $BASE_URL/login ..."
+          for i in $(seq 1 30); do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" -k "$BASE_URL/login" || echo 000)
+            if [ "$CODE" = "200" ]; then
+              echo "Baseline /login returned 200."
+              break
+            fi
+            echo "Attempt $i: got $CODE"
+            sleep 15
+          done
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" -k "$BASE_URL/login")
+          if [ "$CODE" != "200" ]; then
+            echo "Baseline /login did not return 200 (got $CODE). Continuing to cleanup."
+          fi
+
+      - name: Cleanup baseline
+        if: always()
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-baseline"
+          NAMESPACE="${RELEASE_NAME}-ns-pm4"
+          helm uninstall "${RELEASE_NAME}" --namespace "${NAMESPACE}" 2>/dev/null || true
+          kubectl delete namespace "${NAMESPACE}" --timeout=120s --ignore-not-found=true || true
+
+      - name: Substitute perf instance template (update)
+        run: |
+          sed -i "s#appVersion: develop#appVersion: ${{ env.IMAGE_TAG }}#g" .github/templates/instance-perf.yaml
+
+      - name: Deploy update (PR build) and verify
+        id: update
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          HELM_REPO: ${{ secrets.HELM_REPO }}
+          HELM_USERNAME: ${{ secrets.HELM_USERNAME }}
+          HELM_PASSWORD: ${{ secrets.HELM_PASSWORD }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANALYTICS_AWS_ACCESS_KEY: ${{ secrets.ANALYTICS_AWS_ACCESS_KEY }}
+          ANALYTICS_AWS_SECRET_KEY: ${{ secrets.ANALYTICS_AWS_SECRET_KEY }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+          REGISTRY_HOST: ${{ secrets.REGISTRY_HOST }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          TWILIO_SID: ${{ secrets.TWILIO_SID }}
+          TWILIO_TOKEN: ${{ secrets.TWILIO_TOKEN }}
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-update"
+          export RELEASE_NAME APP_VERSION="${{ env.IMAGE_TAG }}" INSTANCE
+          export versionHelm="${{ env.versionHelm }}"
+          .github/scripts/deploy-perf-instance.sh
+          BASE_URL="https://${RELEASE_NAME}.engk8s.processmaker.net"
+          echo "Checking $BASE_URL/login ..."
+          for i in $(seq 1 30); do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" -k "$BASE_URL/login" || echo 000)
+            if [ "$CODE" = "200" ]; then
+              echo "Update /login returned 200."
+              break
+            fi
+            echo "Attempt $i: got $CODE"
+            sleep 15
+          done
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" -k "$BASE_URL/login")
+          if [ "$CODE" != "200" ]; then
+            echo "Update /login did not return 200 (got $CODE). Continuing to cleanup."
+          fi
+
+      - name: Cleanup update
+        if: always()
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-update"
+          NAMESPACE="${RELEASE_NAME}-ns-pm4"
+          helm uninstall "${RELEASE_NAME}" --namespace "${NAMESPACE}" 2>/dev/null || true
+          kubectl delete namespace "${NAMESPACE}" --timeout=120s --ignore-not-found=true || true
+
+      - name: Delete performance node group
+        if: always()
+        run: |
+          export INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          chmod +x .github/scripts/delete-perf-nodegroup.sh
+          .github/scripts/delete-perf-nodegroup.sh
+
+      - name: Comment PR (performance framework)
+        if: success() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '✅ **Performance framework (Phase 1)** ran successfully.\n- Baseline (develop) and update (PR build) were deployed and removed.\n- Dedicated node group was created and deleted.'
+            })
 
   runPhpUnit:
     name: run-phpunit
