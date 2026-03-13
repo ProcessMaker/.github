@@ -337,7 +337,7 @@ jobs:
         with:
           repository: processmaker/.github
           # Use same ref as this workflow so templates/scripts exist (e.g. automated-performance-tests). After merge to main, use ref: main.
-          ref: ${{ github.ref_name }}
+          ref: automated-performance-tests  
 
       - name: Common
         uses: ./.github/actions/common
