@@ -12,6 +12,15 @@ appConfig:
   licenseBranch: production
   licenseGitToken: {{CUSTOMER_LICENSES_PAT}}
 deploy:
+  # Global scheduling: all workloads (web, scheduler, queue, redis, executor, mysql, soketi, pmai) target the perf node.
+  scheduling:
+    enable: true
+    tolerationsKey: 'performance'
+    tolerationsOperator: 'Equal'
+    tolerationsValue: 'ci-{{INSTANCE}}'
+    tolerationsEffect: 'NoSchedule'
+    nodeSelectorKey: 'performance'
+    nodeSelectorValue: 'ci-{{INSTANCE}}'
   pmai:
     openaiHost: pmai-svc.pmai-system.svc.cluster.local
     deployDb: false
@@ -27,17 +36,9 @@ deploy:
     diskSize: 10Gi
   resources:
     enable: false
-  web:
-    scheduling:
-      enable: true
-      tolerationsKey: 'performance'
-      tolerationsOperator: 'Equal'
-      tolerationsValue: 'ci-{{INSTANCE}}'
-      tolerationsEffect: 'NoSchedule'
-      nodeSelectorKey: 'performance'
-      nodeSelectorValue: 'ci-{{INSTANCE}}'
 database:
   deploy: true
+  storageClassName: 'efs-sc-root'
 analytics:
   awsRegion: us-east-1
   awsS3Bucket: tmp-security-logs-to-download
