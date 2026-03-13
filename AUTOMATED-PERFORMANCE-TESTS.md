@@ -30,6 +30,9 @@ The results should be reported in two locations:
 right now we do not have a lot of tests, but as we build this out we expect the collection to expand. It will get to a point where running all the tests will take too long. So the idea will be to group the tests into categories that can be specified in ci tags. For example, if a developer is working on a branch that is meant to optimize database queries, they would want to only run the database tests. They would accomplish this by setting a ci tag: `ci:performance-tests-database`.
 We should also just have an all encompassing ci tag `ci:performance-tests` that will run all tests.
 
+***testing the pipeline (skip build)***  
+To exercise only the performance-test path without rebuilding the image, add **`ci:skip-build`** together with **`ci:performance-tests`** in the PR body. The image job will skip build and push; the performance job will still run and will use the existing image in Harbor for the "update" deploy. The image for your branch (e.g. `processmaker-my-branch`) must already exist in Harbor from a previous run without `ci:skip-build`.
+
 ### development milestones
 
 1. get the new performance cicd framework working. when the tag is present in the pr, create the node group and install develop baseline instance using appVersion: develop. once installed do a quick curl check to /login to ensure 200. Then wipe and do the same with the new appVersion that was built. Do a quick /login curl to ensure it loads 200. then  helm uninstall, terminate dedicated ec2 instance and delete node group.
