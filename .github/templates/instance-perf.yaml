@@ -38,7 +38,7 @@ deploy:
     enable: false
 database:
   deploy: true
-  storageClassName: 'longhorn'
+  storageClassName: 'local-path'
 analytics:
   awsRegion: us-east-1
   awsS3Bucket: tmp-security-logs-to-download
