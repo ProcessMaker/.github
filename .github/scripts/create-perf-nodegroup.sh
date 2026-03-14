@@ -78,6 +78,17 @@ if [ -z "${NODE_SGS}" ]; then
   echo "WARNING: No instances found in ${NODEGROUP_NAME}; skipping EFS SG rule. EFS mounts may fail."
   exit 0
 fi
+
+# Set EC2 Name tag so instances show as "Performance Tests - ci-{INSTANCE}" in the console
+INSTANCE_IDS=$(aws ec2 describe-instances --region "${AWS_REGION}" \
+  --filters "Name=tag:eks:nodegroup-name,Values=${NODEGROUP_NAME}" "Name=instance-state-name,Values=running,pending" \
+  --query 'Reservations[].Instances[].InstanceId' --output text)
+if [ -n "${INSTANCE_IDS}" ]; then
+  NAME_TAG="Performance Tests - ci-${INSTANCE}"
+  echo "Tagging instances with Name=${NAME_TAG}"
+  aws ec2 create-tags --region "${AWS_REGION}" --resources ${INSTANCE_IDS} --tags "Key=Name,Value=${NAME_TAG}"
+fi
+
 for sg in ${NODE_SGS}; do
   if [ "${sg}" = "${EFS_SECURITY_GROUP_ID}" ]; then
     continue
