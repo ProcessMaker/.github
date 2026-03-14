@@ -314,12 +314,14 @@ jobs:
           else
             echo "The pull request does not have an instance on K8s [https://ci-$INSTANCE.engk8s.processmaker.net] not found!!"
           fi
-          # Performance test namespaces (safety net if perf job was cancelled)
+          # Performance test releases (safety net if perf job was cancelled). Perf installs in default namespace.
           for suffix in perf-baseline perf-update; do
-            ns="ci-${INSTANCE}-${suffix}-ns-pm4"
             release="ci-${INSTANCE}-${suffix}"
+            echo "Uninstalling performance release: $release (default namespace)"
+            helm uninstall "$release" --namespace default 2>/dev/null || true
+            ns="ci-${INSTANCE}-${suffix}-ns-pm4"
             if kubectl get namespace "$ns" &>/dev/null; then
-              echo "Deleting performance namespace: $ns"
+              echo "Deleting legacy performance namespace: $ns"
               helm uninstall "$release" --namespace "$ns" 2>/dev/null || true
               kubectl delete namespace "$ns" --timeout=120s --ignore-not-found=true || true
             fi
