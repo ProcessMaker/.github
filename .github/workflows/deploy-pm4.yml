@@ -463,6 +463,25 @@ jobs:
             echo "Baseline /login did not return 200 (got $CODE). Continuing to cleanup."
           fi
 
+      - name: Wait for TLS certificate (baseline)
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-baseline"
+          APP_NS="${RELEASE_NAME}-ns-pm4"
+          echo "Waiting for cert-manager to issue TLS certificate for ${RELEASE_NAME}..."
+          for i in $(seq 1 36); do
+            READY=$(kubectl get certificate -n "$APP_NS" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | tr ' ' '\n' | head -1)
+            if [ "$READY" = "True" ]; then
+              echo "TLS certificate Ready."
+              break
+            fi
+            echo "Waiting for TLS certificate... ($i/36)"
+            sleep 10
+          done
+          if [ "$READY" != "True" ]; then
+            echo "TLS certificate did not become Ready; k6 may see certificate errors."
+          fi
+
       - name: Generate admin access token (baseline)
         id: token_baseline
         run: |
@@ -550,6 +569,25 @@ jobs:
           CODE=$(curl -s -o /dev/null -w "%{http_code}" -k "$BASE_URL/login")
           if [ "$CODE" != "200" ]; then
             echo "Update /login did not return 200 (got $CODE). Continuing to cleanup."
+          fi
+
+      - name: Wait for TLS certificate (update)
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-update"
+          APP_NS="${RELEASE_NAME}-ns-pm4"
+          echo "Waiting for cert-manager to issue TLS certificate for ${RELEASE_NAME}..."
+          for i in $(seq 1 36); do
+            READY=$(kubectl get certificate -n "$APP_NS" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | tr ' ' '\n' | head -1)
+            if [ "$READY" = "True" ]; then
+              echo "TLS certificate Ready."
+              break
+            fi
+            echo "Waiting for TLS certificate... ($i/36)"
+            sleep 10
+          done
+          if [ "$READY" != "True" ]; then
+            echo "TLS certificate did not become Ready; k6 may see certificate errors."
           fi
 
       - name: Generate admin access token (update instance)
