@@ -98,7 +98,61 @@ jobs:
           curl -I --header "Authorization: Bearer ${{ secrets.GIT_TOKEN }}" https://api.github.com
           echo ""
           echo "=== Rate limit check complete ==="
-  
+
+  imageEKSBase:
+    name: build-docker-image-EKS-base
+    if: github.event.action != 'closed' && inputs.delete == '' && contains(github.event.pull_request.body, 'ci:performance-tests')
+    runs-on: ${{ vars.RUNNER }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: processmaker/.github
+
+      - name: Common
+        uses: ./.github/actions/common
+        with:
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Set base branch and image tag
+        run: |
+          BASE_BRANCH="${{ github.event.pull_request.base.ref || github.event.repository.default_branch || 'develop' }}"
+          BASE_IMAGE_TAG="processmaker-$(echo "${BASE_BRANCH}" | sed 's;/;-;g')"
+          echo "BASE_BRANCH=${BASE_BRANCH}" >> $GITHUB_ENV
+          echo "BASE_IMAGE_TAG=${BASE_IMAGE_TAG}" >> $GITHUB_ENV
+          echo "Base branch: ${BASE_BRANCH} -> image tag: ${BASE_IMAGE_TAG}"
+
+      - name: Generate image EKS (base)
+        if: env.BASE_BRANCH != 'develop' && !contains(github.event.pull_request.body, 'ci:skip-build')
+        run: |
+          cd pm4-k8s-distribution/images
+          export CI_RELEASE_BRANCH=$RELEASE_BRANCH
+          branch="${{ env.BASE_BRANCH }}" tag="${{ env.BASE_IMAGE_TAG }}" bash build.k8s-cicd.sh
+          echo "VERSION=${{ env.BASE_IMAGE_TAG }}" >> $GITHUB_ENV
+
+      - name: List Images
+        if: env.BASE_BRANCH != 'develop' && !contains(github.event.pull_request.body, 'ci:skip-build')
+        run: docker images
+
+      - name: Login to Harbor
+        if: env.BASE_BRANCH != 'develop' && !contains(github.event.pull_request.body, 'ci:skip-build')
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ secrets.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Push Enterprise Image to Harbor (base)
+        if: env.BASE_BRANCH != 'develop' && !contains(github.event.pull_request.body, 'ci:skip-build')
+        run: |
+          docker tag processmaker/enterprise:${{ env.BASE_IMAGE_TAG }} ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${{ env.BASE_IMAGE_TAG }}
+          docker push ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${{ env.BASE_IMAGE_TAG }}
+
+      - name: Base image ready
+        if: env.BASE_BRANCH == 'develop' || contains(github.event.pull_request.body, 'ci:skip-build')
+        run: |
+          echo "Skipped base build (base is develop or ci:skip-build); baseline will use existing image if needed."
+
   deployEKS:
     name: deploy-EKS
     if: contains(github.event.pull_request.body, 'ci:deploy')
@@ -329,7 +383,7 @@ jobs:
   performanceTests:
     name: performance-tests
     if: github.event.action != 'closed' && inputs.delete == '' && contains(github.event.pull_request.body, 'ci:performance-tests')
-    needs: imageEKS
+    needs: [imageEKS, imageEKSBase]
     runs-on: ${{ vars.RUNNER }}
     timeout-minutes: 90
     steps:
@@ -383,9 +437,11 @@ jobs:
         run: |
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
           BASE_BRANCH="${{ github.event.pull_request.base.ref || github.event.repository.default_branch || 'develop' }}"
+          BASE_IMAGE_TAG="processmaker-$(echo "${BASE_BRANCH}" | sed 's;/;-;g')"
           echo "BASE_BRANCH=${BASE_BRANCH}" >> $GITHUB_ENV
+          echo "BASE_IMAGE_TAG=${BASE_IMAGE_TAG}" >> $GITHUB_ENV
           sed -i "s#{{INSTANCE}}#${INSTANCE}#g" .github/templates/instance-perf.yaml
-          sed -i "s#{{APP_VERSION}}#${BASE_BRANCH}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{APP_VERSION}}#${BASE_IMAGE_TAG}#g" .github/templates/instance-perf.yaml
           sed -i "s#{{CUSTOMER_LICENSES_PAT}}#${{ secrets.CUSTOMER_LICENSES_PAT }}#g" .github/templates/instance-perf.yaml
           sed -i "s#{{KEYCLOAK_CLIENT_SECRET}}#${{ secrets.KEYCLOAK_CLIENT_SECRET }}#g" .github/templates/instance-perf.yaml
           sed -i "s#{{KEYCLOAK_PASSWORD}}#${{ secrets.KEYCLOAK_PASSWORD }}#g" .github/templates/instance-perf.yaml
@@ -446,7 +502,7 @@ jobs:
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
           RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
           RELEASE_NAME="ci-${INSTANCE}-perf-baseline-${RANDOM_SUFFIX}"
-          export RELEASE_NAME APP_VERSION="${{ env.BASE_BRANCH }}" INSTANCE
+          export RELEASE_NAME APP_VERSION="${{ env.BASE_IMAGE_TAG }}" INSTANCE
           export versionHelm="${{ env.versionHelm }}"
           chmod +x .github/scripts/deploy-perf-instance.sh
           .github/scripts/deploy-perf-instance.sh
