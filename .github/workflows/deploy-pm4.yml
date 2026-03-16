@@ -415,6 +415,7 @@ jobs:
           repository: ProcessMaker/automated-performance-metrics
           ref: main
           path: automated-performance-metrics
+          token: ${{ secrets.GIT_TOKEN }}
 
       - name: Install k6
         run: |
