@@ -380,8 +380,10 @@ jobs:
       - name: Substitute perf instance template (baseline)
         run: |
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          BASE_BRANCH="${{ github.event.pull_request.base.ref || github.event.repository.default_branch || 'develop' }}"
+          echo "BASE_BRANCH=${BASE_BRANCH}" >> $GITHUB_ENV
           sed -i "s#{{INSTANCE}}#${INSTANCE}#g" .github/templates/instance-perf.yaml
-          sed -i "s#{{APP_VERSION}}#develop#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{APP_VERSION}}#${BASE_BRANCH}#g" .github/templates/instance-perf.yaml
           sed -i "s#{{CUSTOMER_LICENSES_PAT}}#${{ secrets.CUSTOMER_LICENSES_PAT }}#g" .github/templates/instance-perf.yaml
           sed -i "s#{{KEYCLOAK_CLIENT_SECRET}}#${{ secrets.KEYCLOAK_CLIENT_SECRET }}#g" .github/templates/instance-perf.yaml
           sed -i "s#{{KEYCLOAK_PASSWORD}}#${{ secrets.KEYCLOAK_PASSWORD }}#g" .github/templates/instance-perf.yaml
@@ -407,7 +409,22 @@ jobs:
           done
           kubectl get nodes -l "performance=ci-${INSTANCE}"
 
-      - name: Deploy baseline (develop) and verify
+      - name: Checkout automated-performance-metrics
+        uses: actions/checkout@v4
+        with:
+          repository: ProcessMaker/automated-performance-metrics
+          ref: main
+          path: automated-performance-metrics
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Deploy baseline (base branch) and verify
         id: baseline
         env:
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
@@ -425,7 +442,7 @@ jobs:
         run: |
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
           RELEASE_NAME="ci-${INSTANCE}-perf-baseline"
-          export RELEASE_NAME APP_VERSION=develop INSTANCE
+          export RELEASE_NAME APP_VERSION="${{ env.BASE_BRANCH }}" INSTANCE
           export versionHelm="${{ env.versionHelm }}"
           chmod +x .github/scripts/deploy-perf-instance.sh
           .github/scripts/deploy-perf-instance.sh
@@ -445,18 +462,57 @@ jobs:
             echo "Baseline /login did not return 200 (got $CODE). Continuing to cleanup."
           fi
 
+      - name: Generate admin access token (baseline)
+        id: token_baseline
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-baseline"
+          APP_NS="${RELEASE_NAME}-ns-pm4"
+          POD=""
+          attempts=0
+          while [ -z "$POD" ]; do
+            POD=$(kubectl get pods -n "$APP_NS" --field-selector=status.phase=Running -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E 'processmaker-scheduler' | head -1)
+            [ -z "$POD" ] && POD=$(kubectl get pods -n "$APP_NS" --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+            [ -n "$POD" ] && break
+            attempts=$((attempts + 1))
+            [ $attempts -ge 5 ] && break
+            sleep 10
+          done
+          echo "Using pod: ${POD:-none}"
+          TOKEN=$(kubectl exec -n "$APP_NS" "$POD" -- sudo -u nginx php /opt/processmaker/artisan processmaker:generate-access-token admin 2>/dev/null | tr -d '\r\n') || true
+          if [ -z "$TOKEN" ]; then
+            echo "Could not generate baseline token"
+            echo "token=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "token=${TOKEN}" >> $GITHUB_OUTPUT
+
+      - name: Run k6 on baseline (users-index)
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-baseline"
+          APP_URL="https://${RELEASE_NAME}.engk8s.processmaker.net"
+          TOKEN="${{ steps.token_baseline.outputs.token }}"
+          if [ -z "$TOKEN" ]; then
+            echo "Skipping baseline k6: no token" | tee baseline-k6-results.txt
+            exit 0
+          fi
+          export BASE_PATH="${APP_URL}"
+          export BEARER_TOKEN="Bearer ${TOKEN}"
+          k6 run automated-performance-metrics/scripts/Api/users-index.js 2>&1 | tee baseline-k6-results.txt
+
       - name: Cleanup baseline
         if: always()
         run: |
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
           RELEASE_NAME="ci-${INSTANCE}-perf-baseline"
-          NAMESPACE="${RELEASE_NAME}-ns-pm4"
-          helm uninstall "${RELEASE_NAME}" --namespace "${NAMESPACE}" 2>/dev/null || true
-          kubectl delete namespace "${NAMESPACE}" --timeout=120s --ignore-not-found=true || true
+          APP_NS="${RELEASE_NAME}-ns-pm4"
+          helm uninstall "${RELEASE_NAME}" --namespace default 2>/dev/null || true
+          kubectl delete namespace "${APP_NS}" --timeout=120s --ignore-not-found=true || true
 
       - name: Substitute perf instance template (update)
         run: |
-          sed -i "s#appVersion: develop#appVersion: ${{ env.IMAGE_TAG }}#g" .github/templates/instance-perf.yaml
+          sed -i "s#^appVersion:.*#appVersion: ${{ env.IMAGE_TAG }}#g" .github/templates/instance-perf.yaml
 
       - name: Deploy update (PR build) and verify
         id: update
@@ -495,14 +551,74 @@ jobs:
             echo "Update /login did not return 200 (got $CODE). Continuing to cleanup."
           fi
 
+      - name: Generate admin access token (update instance)
+        id: token
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-update"
+          APP_NS="${RELEASE_NAME}-ns-pm4"
+          POD=""
+          attempts=0
+          while [ -z "$POD" ]; do
+            POD=$(kubectl get pods -n "$APP_NS" --field-selector=status.phase=Running -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E 'processmaker-scheduler' | head -1)
+            [ -z "$POD" ] && POD=$(kubectl get pods -n "$APP_NS" --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+            [ -n "$POD" ] && break
+            attempts=$((attempts + 1))
+            [ $attempts -ge 5 ] && break
+            sleep 10
+          done
+          echo "Using pod: ${POD:-none}"
+          TOKEN=$(kubectl exec -n "$APP_NS" "$POD" -- sudo -u nginx php /opt/processmaker/artisan processmaker:generate-access-token admin 2>/dev/null | tr -d '\r\n') || true
+          if [ -z "$TOKEN" ]; then
+            echo "Could not generate token (pod may still be starting)"
+            echo "token=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "token=${TOKEN}" >> $GITHUB_OUTPUT
+
+      - name: Run k6 on update (users-index)
+        id: k6_update
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-update"
+          APP_URL="https://${RELEASE_NAME}.engk8s.processmaker.net"
+          TOKEN="${{ steps.token.outputs.token }}"
+          if [ -z "$TOKEN" ]; then
+            echo "Skipping update k6: no token" | tee update-k6-results.txt
+            exit 0
+          fi
+          export BASE_PATH="${APP_URL}"
+          export BEARER_TOKEN="Bearer ${TOKEN}"
+          k6 run automated-performance-metrics/scripts/Api/users-index.js 2>&1 | tee update-k6-results.txt
+
+      - name: Prepare performance comment body
+        run: |
+          {
+            echo '✅ **Performance tests** completed.'
+            echo ''
+            echo "**Baseline:** \`${{ env.BASE_BRANCH }}\` | **Update:** PR build (\`${{ env.IMAGE_TAG }}\`)"
+            echo ''
+            echo '### k6: `users-index` (api/1.0/users) — baseline vs update'
+            echo ''
+            echo '#### Baseline'
+            echo '```'
+            cat baseline-k6-results.txt 2>/dev/null || echo '(no output)'
+            echo '```'
+            echo ''
+            echo '#### Update (PR build)'
+            echo '```'
+            cat update-k6-results.txt 2>/dev/null || echo '(no output)'
+            echo '```'
+          } > perf-comment.md
+
       - name: Cleanup update
         if: always()
         run: |
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
           RELEASE_NAME="ci-${INSTANCE}-perf-update"
-          NAMESPACE="${RELEASE_NAME}-ns-pm4"
-          helm uninstall "${RELEASE_NAME}" --namespace "${NAMESPACE}" 2>/dev/null || true
-          kubectl delete namespace "${NAMESPACE}" --timeout=120s --ignore-not-found=true || true
+          APP_NS="${RELEASE_NAME}-ns-pm4"
+          helm uninstall "${RELEASE_NAME}" --namespace default 2>/dev/null || true
+          kubectl delete namespace "${APP_NS}" --timeout=120s --ignore-not-found=true || true
 
       - name: Delete performance node group
         if: always()
@@ -511,17 +627,21 @@ jobs:
           chmod +x .github/scripts/delete-perf-nodegroup.sh
           .github/scripts/delete-perf-nodegroup.sh
 
-      - name: Comment PR (performance framework)
+      - name: Comment PR (performance results)
         if: success() && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
-            github.rest.issues.createComment({
+            const fs = require('fs');
+            const body = fs.existsSync('perf-comment.md')
+              ? fs.readFileSync('perf-comment.md', 'utf8')
+              : '✅ **Performance tests** completed (k6 results not captured).';
+            await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: '✅ **Performance framework (Phase 1)** ran successfully.\n- Baseline (develop) and update (PR build) were deployed and removed.\n- Dedicated node group was created and deleted.'
-            })
+              body
+            });
 
   runPhpUnit:
     name: run-phpunit
