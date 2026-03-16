@@ -643,21 +643,47 @@ jobs:
 
       - name: Prepare performance comment body
         run: |
+          # Extract only the summary block (TOTAL RESULTS through metrics; drop banner and "running..." lines)
+          extract_summary() {
+            sed -n '/█ TOTAL RESULTS\|TOTAL RESULTS/,/^running (0m/p' "$1" 2>/dev/null | sed '/^running (0m/d' || true
+          }
+          # Parse a single metric value from k6 summary (first field after colon for count/rate lines)
+          get_metric() { grep -E "^\s+$1\.+" "$2" 2>/dev/null | head -1 | awk '{ for(i=2;i<=NF;i++) printf "%s%s", $i, (i<NF?" ":""); print "" }' | xargs; }
+          get_http_duration_avg() { grep -E "^\s+http_req_duration" "$1" 2>/dev/null | head -1 | sed -n 's/.*avg=\([0-9.]*\)ms.*/\1/p'; }
+          get_http_failed_pct() { grep -E "^\s+http_req_failed" "$1" 2>/dev/null | head -1 | sed -n 's/.*: \([0-9.]*\)%.*/\1/p'; }
+
+          BASE_FILE=baseline-k6-results.txt
+          UPD_FILE=update-k6-results.txt
+
+          # Parsed values for comparison (with fallbacks)
+          base_iter="$(get_metric 'iterations' "$BASE_FILE" 2>/dev/null || echo '—')"
+          upd_iter="$(get_metric 'iterations' "$UPD_FILE" 2>/dev/null || echo '—')"
+          base_dur="$(get_http_duration_avg "$BASE_FILE" 2>/dev/null || echo '—')"
+          upd_dur="$(get_http_duration_avg "$UPD_FILE" 2>/dev/null || echo '—')"
+          base_fail="$(get_http_failed_pct "$BASE_FILE" 2>/dev/null || echo '—')"
+          upd_fail="$(get_http_failed_pct "$UPD_FILE" 2>/dev/null || echo '—')"
+
           {
             echo '✅ **Performance tests** completed.'
             echo ''
             echo "**Baseline:** \`${{ env.BASE_BRANCH }}\` | **Update:** PR build (\`${{ env.IMAGE_TAG }}\`)"
             echo ''
-            echo '### k6: `users-index` (api/1.0/users) — baseline vs update'
+            echo '### Comparison (users-index)'
             echo ''
-            echo '#### Baseline'
+            echo '| Metric | Baseline | Update |'
+            echo '|--------|----------|--------|'
+            echo "| iterations | \`${base_iter}\` | \`${upd_iter}\` |"
+            echo "| http_req_duration (avg ms) | \`${base_dur}\` | \`${upd_dur}\` |"
+            echo "| http_req_failed (%) | \`${base_fail}\` | \`${upd_fail}\` |"
+            echo ''
+            echo '### k6 summary — baseline'
             echo '```'
-            cat baseline-k6-results.txt 2>/dev/null || echo '(no output)'
+            extract_summary "$BASE_FILE" | cat -s 2>/dev/null || echo '(no summary)'
             echo '```'
             echo ''
-            echo '#### Update (PR build)'
+            echo '### k6 summary — update (PR build)'
             echo '```'
-            cat update-k6-results.txt 2>/dev/null || echo '(no output)'
+            extract_summary "$UPD_FILE" | cat -s 2>/dev/null || echo '(no summary)'
             echo '```'
           } > perf-comment.md
 
