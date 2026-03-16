@@ -315,14 +315,13 @@ jobs:
             echo "The pull request does not have an instance on K8s [https://ci-$INSTANCE.engk8s.processmaker.net] not found!!"
           fi
           # Performance test releases (safety net if perf job was cancelled). Perf installs in default namespace.
-          for suffix in perf-baseline perf-update; do
-            release="ci-${INSTANCE}-${suffix}"
+          # Release names include 8-char hex suffix: ci-${INSTANCE}-perf-baseline-<hex8>, ci-${INSTANCE}-perf-update-<hex8>
+          for release in $(helm list -n default -q 2>/dev/null | grep -E "^ci-${INSTANCE}-perf-(baseline|update)-[a-f0-9]{8}$" || true); do
             echo "Uninstalling performance release: $release (default namespace)"
             helm uninstall "$release" --namespace default 2>/dev/null || true
-            ns="ci-${INSTANCE}-${suffix}-ns-pm4"
+            ns="${release}-ns-pm4"
             if kubectl get namespace "$ns" &>/dev/null; then
-              echo "Deleting legacy performance namespace: $ns"
-              helm uninstall "$release" --namespace "$ns" 2>/dev/null || true
+              echo "Deleting performance namespace: $ns"
               kubectl delete namespace "$ns" --timeout=120s --ignore-not-found=true || true
             fi
           done
@@ -373,9 +372,12 @@ jobs:
         id: perf_prep
         run: |
           INSTANCE=$(echo -n ${{ env.IMAGE_TAG }} | md5sum | head -c 10)
+          RANDOM_SUFFIX=$(openssl rand -hex 4)
           echo "instance=${INSTANCE}" >> $GITHUB_OUTPUT
           echo "INSTANCE=${INSTANCE}" >> $GITHUB_ENV
-          echo "Instance ID: ${INSTANCE}"
+          echo "random_suffix=${RANDOM_SUFFIX}" >> $GITHUB_OUTPUT
+          echo "RANDOM_SUFFIX=${RANDOM_SUFFIX}" >> $GITHUB_ENV
+          echo "Instance ID: ${INSTANCE} (hostname suffix: ${RANDOM_SUFFIX})"
 
       - name: Substitute perf instance template (baseline)
         run: |
@@ -442,7 +444,8 @@ jobs:
           TWILIO_TOKEN: ${{ secrets.TWILIO_TOKEN }}
         run: |
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
-          RELEASE_NAME="ci-${INSTANCE}-perf-baseline"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-baseline-${RANDOM_SUFFIX}"
           export RELEASE_NAME APP_VERSION="${{ env.BASE_BRANCH }}" INSTANCE
           export versionHelm="${{ env.versionHelm }}"
           chmod +x .github/scripts/deploy-perf-instance.sh
@@ -466,7 +469,8 @@ jobs:
       - name: Wait for TLS certificate (baseline)
         run: |
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
-          RELEASE_NAME="ci-${INSTANCE}-perf-baseline"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-baseline-${RANDOM_SUFFIX}"
           APP_NS="${RELEASE_NAME}-ns-pm4"
           echo "Waiting for cert-manager to issue TLS certificate for ${RELEASE_NAME}..."
           for i in $(seq 1 36); do
@@ -486,7 +490,8 @@ jobs:
         id: token_baseline
         run: |
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
-          RELEASE_NAME="ci-${INSTANCE}-perf-baseline"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-baseline-${RANDOM_SUFFIX}"
           APP_NS="${RELEASE_NAME}-ns-pm4"
           POD=""
           attempts=0
@@ -510,7 +515,8 @@ jobs:
       - name: Run k6 on baseline (users-index)
         run: |
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
-          RELEASE_NAME="ci-${INSTANCE}-perf-baseline"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-baseline-${RANDOM_SUFFIX}"
           APP_URL="https://${RELEASE_NAME}.engk8s.processmaker.net"
           TOKEN="${{ steps.token_baseline.outputs.token }}"
           if [ -z "$TOKEN" ]; then
@@ -525,7 +531,8 @@ jobs:
         if: always()
         run: |
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
-          RELEASE_NAME="ci-${INSTANCE}-perf-baseline"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-baseline-${RANDOM_SUFFIX}"
           APP_NS="${RELEASE_NAME}-ns-pm4"
           helm uninstall "${RELEASE_NAME}" --namespace default 2>/dev/null || true
           kubectl delete namespace "${APP_NS}" --timeout=120s --ignore-not-found=true || true
@@ -551,7 +558,8 @@ jobs:
           TWILIO_TOKEN: ${{ secrets.TWILIO_TOKEN }}
         run: |
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
-          RELEASE_NAME="ci-${INSTANCE}-perf-update"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-update-${RANDOM_SUFFIX}"
           export RELEASE_NAME APP_VERSION="${{ env.IMAGE_TAG }}" INSTANCE
           export versionHelm="${{ env.versionHelm }}"
           .github/scripts/deploy-perf-instance.sh
@@ -574,7 +582,8 @@ jobs:
       - name: Wait for TLS certificate (update)
         run: |
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
-          RELEASE_NAME="ci-${INSTANCE}-perf-update"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-update-${RANDOM_SUFFIX}"
           APP_NS="${RELEASE_NAME}-ns-pm4"
           echo "Waiting for cert-manager to issue TLS certificate for ${RELEASE_NAME}..."
           for i in $(seq 1 36); do
@@ -594,7 +603,8 @@ jobs:
         id: token
         run: |
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
-          RELEASE_NAME="ci-${INSTANCE}-perf-update"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-update-${RANDOM_SUFFIX}"
           APP_NS="${RELEASE_NAME}-ns-pm4"
           POD=""
           attempts=0
@@ -619,7 +629,8 @@ jobs:
         id: k6_update
         run: |
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
-          RELEASE_NAME="ci-${INSTANCE}-perf-update"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-update-${RANDOM_SUFFIX}"
           APP_URL="https://${RELEASE_NAME}.engk8s.processmaker.net"
           TOKEN="${{ steps.token.outputs.token }}"
           if [ -z "$TOKEN" ]; then
@@ -654,7 +665,8 @@ jobs:
         if: always()
         run: |
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
-          RELEASE_NAME="ci-${INSTANCE}-perf-update"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-update-${RANDOM_SUFFIX}"
           APP_NS="${RELEASE_NAME}-ns-pm4"
           helm uninstall "${RELEASE_NAME}" --namespace default 2>/dev/null || true
           kubectl delete namespace "${APP_NS}" --timeout=120s --ignore-not-found=true || true
