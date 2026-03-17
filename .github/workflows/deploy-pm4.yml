@@ -938,8 +938,6 @@ jobs:
           # Build list of test_ids from whatever result files we have (robust if perf-test-scripts.txt is missing from artifacts)
           (ls -1 baseline-*-k6-results.txt 2>/dev/null | sed 's/^baseline-//;s/-k6-results\.txt$//'; \
            ls -1 update-*-k6-results.txt 2>/dev/null | sed 's/^update-//;s/-k6-results\.txt$//') | sort -u > perf-test-ids.txt
-          echo "Result files after copy:" && ls -1 baseline-*-k6-results.txt update-*-k6-results.txt 2>/dev/null || true
-          echo "Test IDs to report:" && cat perf-test-ids.txt || true
 
           extract_summary() {
             sed -n '/█ TOTAL RESULTS\|TOTAL RESULTS/,/^running (0m/p' "$1" 2>/dev/null | sed '/^running (0m/d' || true
