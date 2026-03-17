@@ -631,6 +631,13 @@ jobs:
           APP_NS="${RELEASE_NAME}-ns-pm4"
           helm uninstall "${RELEASE_NAME}" --namespace default 2>/dev/null || true
           kubectl delete namespace "${APP_NS}" --timeout=120s --ignore-not-found=true || true
+          # Force-cleanup: remove stuck pods so namespace can terminate and node group delete can complete
+          for pod in $(kubectl get pods -n "${APP_NS}" -o name 2>/dev/null); do
+            kubectl delete "${pod}" -n "${APP_NS}" --grace-period=0 --force 2>/dev/null || true
+          done
+          if kubectl get namespace "${APP_NS}" &>/dev/null; then
+            kubectl get namespace "${APP_NS}" -o json | jq '.metadata.finalizers = []' | kubectl replace --raw "/api/v1/namespaces/${APP_NS}/finalize" -f - 2>/dev/null || true
+          fi
 
       - name: Delete performance node group (baseline)
         if: always()
@@ -888,6 +895,13 @@ jobs:
           APP_NS="${RELEASE_NAME}-ns-pm4"
           helm uninstall "${RELEASE_NAME}" --namespace default 2>/dev/null || true
           kubectl delete namespace "${APP_NS}" --timeout=120s --ignore-not-found=true || true
+          # Force-cleanup: remove stuck pods so namespace can terminate and node group delete can complete
+          for pod in $(kubectl get pods -n "${APP_NS}" -o name 2>/dev/null); do
+            kubectl delete "${pod}" -n "${APP_NS}" --grace-period=0 --force 2>/dev/null || true
+          done
+          if kubectl get namespace "${APP_NS}" &>/dev/null; then
+            kubectl get namespace "${APP_NS}" -o json | jq '.metadata.finalizers = []' | kubectl replace --raw "/api/v1/namespaces/${APP_NS}/finalize" -f - 2>/dev/null || true
+          fi
 
       - name: Delete performance node group (update)
         if: always()
@@ -915,7 +929,12 @@ jobs:
 
       - name: Prepare performance comment body
         run: |
-          cp baseline-results/perf-test-scripts.txt . 2>/dev/null || cp update-results/perf-test-scripts.txt .
+          # Merge script lists from both artifacts so we compare every test that ran in either job
+          (cat baseline-results/perf-test-scripts.txt 2>/dev/null; cat update-results/perf-test-scripts.txt 2>/dev/null) | sort -u > perf-test-scripts.txt
+          if [ ! -s perf-test-scripts.txt ]; then
+            touch perf-test-scripts.txt
+          fi
+          # Copy result files into current dir (same names as baseline/update jobs produced)
           cp baseline-results/baseline-*-k6-results.txt . 2>/dev/null || true
           cp update-results/update-*-k6-results.txt . 2>/dev/null || true
 
