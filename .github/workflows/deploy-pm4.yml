@@ -528,16 +528,33 @@ jobs:
           RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
           RELEASE_NAME="ci-${INSTANCE}-perf-baseline-${RANDOM_SUFFIX}"
           APP_NS="${RELEASE_NAME}-ns-pm4"
+          CERT_NAME="${RELEASE_NAME}-tls-secret"
           echo "Waiting for cert-manager to issue TLS certificate for ${RELEASE_NAME}..."
-          for i in $(seq 1 36); do
+          READY=""
+          for i in $(seq 1 5); do
             READY=$(kubectl get certificate -n "$APP_NS" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | tr ' ' '\n' | head -1)
             if [ "$READY" = "True" ]; then
               echo "TLS certificate Ready."
               break
             fi
-            echo "Waiting for TLS certificate... ($i/36)"
+            echo "Waiting for TLS certificate... ($i/5)"
             sleep 10
           done
+          if [ "$READY" != "True" ]; then
+            echo "Certificate not ready after 5 loops; deleting to trigger regeneration..."
+            kubectl delete certificate -n "$APP_NS" "$CERT_NAME" --ignore-not-found=true || true
+            sleep 5
+            echo "Waiting up to 5 more loops for renewed certificate..."
+            for i in $(seq 1 5); do
+              READY=$(kubectl get certificate -n "$APP_NS" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | tr ' ' '\n' | head -1)
+              if [ "$READY" = "True" ]; then
+                echo "TLS certificate Ready (after retry)."
+                break
+              fi
+              echo "Waiting for TLS certificate (retry)... ($i/5)"
+              sleep 10
+            done
+          fi
           if [ "$READY" != "True" ]; then
             echo "TLS certificate did not become Ready; k6 may see certificate errors."
           fi
@@ -641,16 +658,33 @@ jobs:
           RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
           RELEASE_NAME="ci-${INSTANCE}-perf-update-${RANDOM_SUFFIX}"
           APP_NS="${RELEASE_NAME}-ns-pm4"
+          CERT_NAME="${RELEASE_NAME}-tls-secret"
           echo "Waiting for cert-manager to issue TLS certificate for ${RELEASE_NAME}..."
-          for i in $(seq 1 36); do
+          READY=""
+          for i in $(seq 1 5); do
             READY=$(kubectl get certificate -n "$APP_NS" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | tr ' ' '\n' | head -1)
             if [ "$READY" = "True" ]; then
               echo "TLS certificate Ready."
               break
             fi
-            echo "Waiting for TLS certificate... ($i/36)"
+            echo "Waiting for TLS certificate... ($i/5)"
             sleep 10
           done
+          if [ "$READY" != "True" ]; then
+            echo "Certificate not ready after 5 loops; deleting to trigger regeneration..."
+            kubectl delete certificate -n "$APP_NS" "$CERT_NAME" --ignore-not-found=true || true
+            sleep 5
+            echo "Waiting up to 5 more loops for renewed certificate..."
+            for i in $(seq 1 5); do
+              READY=$(kubectl get certificate -n "$APP_NS" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | tr ' ' '\n' | head -1)
+              if [ "$READY" = "True" ]; then
+                echo "TLS certificate Ready (after retry)."
+                break
+              fi
+              echo "Waiting for TLS certificate (retry)... ($i/5)"
+              sleep 10
+            done
+          fi
           if [ "$READY" != "True" ]; then
             echo "TLS certificate did not become Ready; k6 may see certificate errors."
           fi
