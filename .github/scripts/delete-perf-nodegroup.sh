@@ -33,10 +33,14 @@ if [ -n "${NODE_SGS}" ]; then
     if [ "${sg}" = "${EFS_SECURITY_GROUP_ID}" ]; then
       continue
     fi
-    echo "Revoking inbound rule from ${EFS_SECURITY_GROUP_ID}: TCP 2049 from ${sg}"
+    echo "Revoking inbound rules from ${EFS_SECURITY_GROUP_ID}: NFS (TCP+UDP 2049) from ${sg}"
     aws ec2 revoke-security-group-ingress --region "${AWS_REGION}" \
       --group-id "${EFS_SECURITY_GROUP_ID}" \
       --protocol tcp --port 2049 \
+      --source-group "${sg}" 2>/dev/null || true
+    aws ec2 revoke-security-group-ingress --region "${AWS_REGION}" \
+      --group-id "${EFS_SECURITY_GROUP_ID}" \
+      --protocol udp --port 2049 \
       --source-group "${sg}" 2>/dev/null || true
   done
 fi
