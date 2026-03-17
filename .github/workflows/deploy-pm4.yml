@@ -770,6 +770,7 @@ jobs:
           RELEASE_NAME="ci-${INSTANCE}-perf-update-${RANDOM_SUFFIX}"
           export RELEASE_NAME APP_VERSION="${{ env.IMAGE_TAG }}" INSTANCE
           export versionHelm="${{ env.versionHelm }}"
+          chmod +x .github/scripts/deploy-perf-instance.sh
           .github/scripts/deploy-perf-instance.sh
           BASE_URL="https://${RELEASE_NAME}.engk8s.processmaker.net"
           echo "Checking $BASE_URL/login ..."
