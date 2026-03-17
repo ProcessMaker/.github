@@ -385,8 +385,7 @@ jobs:
     if: github.event.action != 'closed' && inputs.delete == '' && contains(github.event.pull_request.body, 'ci:performance-tests')
     needs: [imageEKS, imageEKSBase]
     runs-on: ${{ vars.RUNNER }}
-    timeout-minutes: 60
-    steps:
+  steps:
       - name: Checkout .github repo
         uses: actions/checkout@v4
         with:
@@ -646,8 +645,7 @@ jobs:
     if: github.event.action != 'closed' && inputs.delete == '' && contains(github.event.pull_request.body, 'ci:performance-tests')
     needs: [imageEKS, imageEKSBase]
     runs-on: ${{ vars.RUNNER }}
-    timeout-minutes: 60
-    steps:
+  steps:
       - name: Checkout .github repo
         uses: actions/checkout@v4
         with:
