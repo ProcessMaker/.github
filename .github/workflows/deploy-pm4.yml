@@ -569,14 +569,13 @@ jobs:
           POD=""
           attempts=0
           while [ -z "$POD" ]; do
-            POD=$(kubectl get pods -n "$APP_NS" --field-selector=status.phase=Running -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E 'processmaker-scheduler' | head -1)
-            [ -z "$POD" ] && POD=$(kubectl get pods -n "$APP_NS" --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+            POD=$(kubectl get pods -n "$APP_NS" -l service=web --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
             [ -n "$POD" ] && break
             attempts=$((attempts + 1))
             [ $attempts -ge 5 ] && break
             sleep 10
           done
-          echo "Using pod: ${POD:-none}"
+          echo "Using web pod: ${POD:-none}"
           TOKEN=$(kubectl exec -n "$APP_NS" "$POD" -- sudo -u nginx php /opt/processmaker/artisan processmaker:generate-access-token admin 2>/dev/null | tr -d '\r\n') || true
           if [ -z "$TOKEN" ]; then
             echo "Could not generate baseline token"
@@ -699,14 +698,13 @@ jobs:
           POD=""
           attempts=0
           while [ -z "$POD" ]; do
-            POD=$(kubectl get pods -n "$APP_NS" --field-selector=status.phase=Running -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E 'processmaker-scheduler' | head -1)
-            [ -z "$POD" ] && POD=$(kubectl get pods -n "$APP_NS" --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+            POD=$(kubectl get pods -n "$APP_NS" -l service=web --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
             [ -n "$POD" ] && break
             attempts=$((attempts + 1))
             [ $attempts -ge 5 ] && break
             sleep 10
           done
-          echo "Using pod: ${POD:-none}"
+          echo "Using web pod: ${POD:-none}"
           TOKEN=$(kubectl exec -n "$APP_NS" "$POD" -- sudo -u nginx php /opt/processmaker/artisan processmaker:generate-access-token admin 2>/dev/null | tr -d '\r\n') || true
           if [ -z "$TOKEN" ]; then
             echo "Could not generate token (pod may still be starting)"
