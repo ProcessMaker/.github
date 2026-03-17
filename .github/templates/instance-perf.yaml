@@ -1,5 +1,6 @@
 # Performance test instance: in-cluster MySQL only (database.deploy: true), no RDS.
-# Placeholders: {{INSTANCE}}, {{APP_VERSION}}, {{CUSTOMER_LICENSES_PAT}}, {{KEYCLOAK_CLIENT_SECRET}}, {{KEYCLOAK_PASSWORD}}
+# Placeholders: {{INSTANCE}}, {{PERF_NODE_LABEL}}, {{APP_VERSION}}, {{CUSTOMER_LICENSES_PAT}}, {{KEYCLOAK_CLIENT_SECRET}}, {{KEYCLOAK_PASSWORD}}
+# PERF_NODE_LABEL: node selector/taint value (e.g. ci-INSTANCE-baseline or ci-INSTANCE-update) for targeting the correct node group.
 # Release name is set at helm install time (e.g. ci-INSTANCE-perf-baseline); chart uses it for ingress host.
 appVersion: {{APP_VERSION}}
 eksCluster: pm4-eng
@@ -18,10 +19,10 @@ deploy:
     enable: true
     tolerationsKey: 'performance'
     tolerationsOperator: 'Equal'
-    tolerationsValue: 'ci-{{INSTANCE}}'
+    tolerationsValue: '{{PERF_NODE_LABEL}}'
     tolerationsEffect: 'NoSchedule'
     nodeSelectorKey: 'performance'
-    nodeSelectorValue: 'ci-{{INSTANCE}}'
+    nodeSelectorValue: '{{PERF_NODE_LABEL}}'
   pmai:
     openaiHost: pmai-svc.pmai-system.svc.cluster.local
     deployDb: false

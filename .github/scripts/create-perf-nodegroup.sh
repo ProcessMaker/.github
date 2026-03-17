@@ -5,13 +5,20 @@
 set -euo pipefail
 
 INSTANCE="${INSTANCE:?INSTANCE is required (10-char instance id)}"
+# Optional: baseline | update — creates separate node groups for parallel perf tests.
+PERF_SUFFIX="${PERF_SUFFIX:-}"
 EKS_CLUSTER_NAME="${EKS_CLUSTER_NAME:-pm4-eng}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
 # EFS mount target security group; must allow NFS (2049) from perf nodes so they can mount EFS.
 EFS_SECURITY_GROUP_ID="${EFS_SECURITY_GROUP_ID:-sg-019a2068045d7a240}"
-NODEGROUP_NAME="perf-ci-${INSTANCE}"
+if [ -n "${PERF_SUFFIX}" ]; then
+  NODEGROUP_NAME="perf-ci-${INSTANCE}-${PERF_SUFFIX}"
+  TAINT_VALUE="ci-${INSTANCE}-${PERF_SUFFIX}"
+else
+  NODEGROUP_NAME="perf-ci-${INSTANCE}"
+  TAINT_VALUE="ci-${INSTANCE}"
+fi
 TAINT_KEY="performance"
-TAINT_VALUE="ci-${INSTANCE}"
 INSTANCE_TYPE="${INSTANCE_TYPE:-r6a.xlarge}"
 
 echo "Creating performance node group: ${NODEGROUP_NAME} (cluster=${EKS_CLUSTER_NAME}, region=${AWS_REGION})"
@@ -84,7 +91,11 @@ INSTANCE_IDS=$(aws ec2 describe-instances --region "${AWS_REGION}" \
   --filters "Name=tag:eks:nodegroup-name,Values=${NODEGROUP_NAME}" "Name=instance-state-name,Values=running,pending" \
   --query 'Reservations[].Instances[].InstanceId' --output text)
 if [ -n "${INSTANCE_IDS}" ]; then
-  NAME_TAG="Performance Tests - ci-${INSTANCE}"
+  if [ -n "${PERF_SUFFIX}" ]; then
+    NAME_TAG="Performance Tests - ci-${INSTANCE}-${PERF_SUFFIX}"
+  else
+    NAME_TAG="Performance Tests - ci-${INSTANCE}"
+  fi
   echo "Tagging instances with Name=${NAME_TAG}"
   aws ec2 create-tags --region "${AWS_REGION}" --resources ${INSTANCE_IDS} --tags "Key=Name,Value=${NAME_TAG}"
 fi

@@ -380,19 +380,18 @@ jobs:
             fi
           done
 
-  performanceTests:
-    name: performance-tests
+  perfBaseline:
+    name: perf-baseline
     if: github.event.action != 'closed' && inputs.delete == '' && contains(github.event.pull_request.body, 'ci:performance-tests')
     needs: [imageEKS, imageEKSBase]
     runs-on: ${{ vars.RUNNER }}
-    timeout-minutes: 90
+    timeout-minutes: 60
     steps:
       - name: Checkout .github repo
         uses: actions/checkout@v4
         with:
           repository: processmaker/.github
-          # Use same ref as this workflow so templates/scripts exist (e.g. automated-performance-tests). After merge to main, use ref: main.
-          ref: automated-performance-tests  
+          ref: automated-performance-tests
 
       - name: Common
         uses: ./.github/actions/common
@@ -422,7 +421,7 @@ jobs:
       - name: Authenticate with Amazon EKS
         run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
 
-      - name: Prepare performance test
+      - name: Prepare performance test (baseline)
         id: perf_prep
         run: |
           INSTANCE=$(echo -n ${{ env.IMAGE_TAG }} | md5sum | head -c 10)
@@ -438,26 +437,29 @@ jobs:
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
           BASE_BRANCH="${{ github.event.pull_request.base.ref || github.event.repository.default_branch || 'develop' }}"
           BASE_IMAGE_TAG="processmaker-$(echo "${BASE_BRANCH}" | sed 's;/;-;g')"
+          PERF_NODE_LABEL="ci-${INSTANCE}-baseline"
           echo "BASE_BRANCH=${BASE_BRANCH}" >> $GITHUB_ENV
           echo "BASE_IMAGE_TAG=${BASE_IMAGE_TAG}" >> $GITHUB_ENV
           sed -i "s#{{INSTANCE}}#${INSTANCE}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{PERF_NODE_LABEL}}#${PERF_NODE_LABEL}#g" .github/templates/instance-perf.yaml
           sed -i "s#{{APP_VERSION}}#${BASE_IMAGE_TAG}#g" .github/templates/instance-perf.yaml
           sed -i "s#{{CUSTOMER_LICENSES_PAT}}#${{ secrets.CUSTOMER_LICENSES_PAT }}#g" .github/templates/instance-perf.yaml
           sed -i "s#{{KEYCLOAK_CLIENT_SECRET}}#${{ secrets.KEYCLOAK_CLIENT_SECRET }}#g" .github/templates/instance-perf.yaml
           sed -i "s#{{KEYCLOAK_PASSWORD}}#${{ secrets.KEYCLOAK_PASSWORD }}#g" .github/templates/instance-perf.yaml
 
-      - name: Create performance node group
+      - name: Create performance node group (baseline)
         run: |
           export INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          export PERF_SUFFIX=baseline
           chmod +x .github/scripts/create-perf-nodegroup.sh
           .github/scripts/create-perf-nodegroup.sh
 
-      - name: Wait for performance node Ready
+      - name: Wait for performance node Ready (baseline)
         run: |
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
-          echo "Waiting for node with label performance=ci-${INSTANCE} to be Ready..."
+          echo "Waiting for node with label performance=ci-${INSTANCE}-baseline to be Ready..."
           for i in $(seq 1 30); do
-            READY=$(kubectl get nodes -l "performance=ci-${INSTANCE}" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+            READY=$(kubectl get nodes -l "performance=ci-${INSTANCE}-baseline" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
             if [ "$READY" = "True" ]; then
               echo "Node is Ready."
               break
@@ -465,7 +467,7 @@ jobs:
             echo "Waiting... ($i/30)"
             sleep 20
           done
-          kubectl get nodes -l "performance=ci-${INSTANCE}"
+          kubectl get nodes -l "performance=ci-${INSTANCE}-baseline"
 
       - name: Checkout automated-performance-metrics
         uses: actions/checkout@v4
@@ -613,6 +615,14 @@ jobs:
             k6 run "$script" 2>&1 | tee "baseline-${test_id}-k6-results.txt" || true
           done < perf-test-scripts.txt
 
+      - name: Upload baseline results
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-results
+          path: |
+            perf-test-scripts.txt
+            baseline-*-k6-results.txt
+
       - name: Cleanup baseline
         if: always()
         run: |
@@ -623,9 +633,123 @@ jobs:
           helm uninstall "${RELEASE_NAME}" --namespace default 2>/dev/null || true
           kubectl delete namespace "${APP_NS}" --timeout=120s --ignore-not-found=true || true
 
+      - name: Delete performance node group (baseline)
+        if: always()
+        run: |
+          export INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          export PERF_SUFFIX=baseline
+          chmod +x .github/scripts/delete-perf-nodegroup.sh
+          .github/scripts/delete-perf-nodegroup.sh
+
+  perfUpdate:
+    name: perf-update
+    if: github.event.action != 'closed' && inputs.delete == '' && contains(github.event.pull_request.body, 'ci:performance-tests')
+    needs: [imageEKS, imageEKSBase]
+    runs-on: ${{ vars.RUNNER }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout .github repo
+        uses: actions/checkout@v4
+        with:
+          repository: processmaker/.github
+          ref: automated-performance-tests
+
+      - name: Common
+        uses: ./.github/actions/common
+        with:
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Install pm4-tools
+        run: |
+          echo "versionHelm=$(grep "version:" "pm4-k8s-distribution/charts/enterprise/Chart.yaml" | awk '{print $2}' | sed 's/\"//g')" >> $GITHUB_ENV
+          cd pm4-k8s-distribution/images/pm4-tools
+          composer install --no-interaction
+          cd ../..
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Set up kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Authenticate with Amazon EKS
+        run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
+
+      - name: Prepare performance test (update)
+        id: perf_prep
+        run: |
+          INSTANCE=$(echo -n ${{ env.IMAGE_TAG }} | md5sum | head -c 10)
+          RANDOM_SUFFIX=$(openssl rand -hex 4)
+          echo "instance=${INSTANCE}" >> $GITHUB_OUTPUT
+          echo "INSTANCE=${INSTANCE}" >> $GITHUB_ENV
+          echo "random_suffix=${RANDOM_SUFFIX}" >> $GITHUB_OUTPUT
+          echo "RANDOM_SUFFIX=${RANDOM_SUFFIX}" >> $GITHUB_ENV
+          echo "Instance ID: ${INSTANCE} (hostname suffix: ${RANDOM_SUFFIX})"
+
       - name: Substitute perf instance template (update)
         run: |
-          sed -i "s#^appVersion:.*#appVersion: ${{ env.IMAGE_TAG }}#g" .github/templates/instance-perf.yaml
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          PERF_NODE_LABEL="ci-${INSTANCE}-update"
+          sed -i "s#{{INSTANCE}}#${INSTANCE}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{PERF_NODE_LABEL}}#${PERF_NODE_LABEL}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{APP_VERSION}}#${{ env.IMAGE_TAG }}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{CUSTOMER_LICENSES_PAT}}#${{ secrets.CUSTOMER_LICENSES_PAT }}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{KEYCLOAK_CLIENT_SECRET}}#${{ secrets.KEYCLOAK_CLIENT_SECRET }}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{KEYCLOAK_PASSWORD}}#${{ secrets.KEYCLOAK_PASSWORD }}#g" .github/templates/instance-perf.yaml
+
+      - name: Create performance node group (update)
+        run: |
+          export INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          export PERF_SUFFIX=update
+          chmod +x .github/scripts/create-perf-nodegroup.sh
+          .github/scripts/create-perf-nodegroup.sh
+
+      - name: Wait for performance node Ready (update)
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          echo "Waiting for node with label performance=ci-${INSTANCE}-update to be Ready..."
+          for i in $(seq 1 30); do
+            READY=$(kubectl get nodes -l "performance=ci-${INSTANCE}-update" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+            if [ "$READY" = "True" ]; then
+              echo "Node is Ready."
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 20
+          done
+          kubectl get nodes -l "performance=ci-${INSTANCE}-update"
+
+      - name: Checkout automated-performance-metrics
+        uses: actions/checkout@v4
+        with:
+          repository: ProcessMaker/automated-performance-metrics
+          ref: main
+          path: automated-performance-metrics
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Discover k6 tests
+        run: |
+          find automated-performance-metrics/scripts -name '*.js' -type f | sort > perf-test-scripts.txt
+          if [ ! -s perf-test-scripts.txt ]; then
+            echo "automated-performance-metrics/scripts/Api/users-index.js" > perf-test-scripts.txt
+          fi
+          echo "Discovered k6 tests:"
+          cat perf-test-scripts.txt
 
       - name: Deploy update (PR build) and verify
         id: update
@@ -748,21 +872,66 @@ jobs:
             k6 run "$script" 2>&1 | tee "update-${test_id}-k6-results.txt" || true
           done < perf-test-scripts.txt
 
+      - name: Upload update results
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-results
+          path: |
+            perf-test-scripts.txt
+            update-*-k6-results.txt
+
+      - name: Cleanup update
+        if: always()
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-update-${RANDOM_SUFFIX}"
+          APP_NS="${RELEASE_NAME}-ns-pm4"
+          helm uninstall "${RELEASE_NAME}" --namespace default 2>/dev/null || true
+          kubectl delete namespace "${APP_NS}" --timeout=120s --ignore-not-found=true || true
+
+      - name: Delete performance node group (update)
+        if: always()
+        run: |
+          export INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          export PERF_SUFFIX=update
+          chmod +x .github/scripts/delete-perf-nodegroup.sh
+          .github/scripts/delete-perf-nodegroup.sh
+
+  perfComment:
+    name: perf-comment
+    if: github.event.action != 'closed' && inputs.delete == '' && contains(github.event.pull_request.body, 'ci:performance-tests')
+    needs: [perfBaseline, perfUpdate]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download baseline results
+        uses: actions/download-artifact@v4
+        with:
+          name: baseline-results
+
+      - name: Download update results
+        uses: actions/download-artifact@v4
+        with:
+          name: update-results
+
       - name: Prepare performance comment body
         run: |
-          # Extract only the summary block (TOTAL RESULTS through metrics; drop banner and "running..." lines)
+          cp baseline-results/perf-test-scripts.txt . 2>/dev/null || cp update-results/perf-test-scripts.txt .
+          cp baseline-results/baseline-*-k6-results.txt . 2>/dev/null || true
+          cp update-results/update-*-k6-results.txt . 2>/dev/null || true
+
           extract_summary() {
             sed -n '/█ TOTAL RESULTS\|TOTAL RESULTS/,/^running (0m/p' "$1" 2>/dev/null | sed '/^running (0m/d' || true
           }
-          # Parse a single metric value from k6 summary (first field after colon for count/rate lines)
           get_metric() { grep -E "^\s+$1\.+" "$2" 2>/dev/null | head -1 | awk '{ for(i=2;i<=NF;i++) printf "%s%s", $i, (i<NF?" ":""); print "" }' | xargs; }
           get_http_duration_avg() { grep -E "^\s+http_req_duration" "$1" 2>/dev/null | head -1 | sed -n 's/.*avg=\([0-9.]*\)ms.*/\1/p'; }
           get_http_failed_pct() { grep -E "^\s+http_req_failed" "$1" 2>/dev/null | head -1 | sed -n 's/.*: \([0-9.]*\)%.*/\1/p'; }
 
+          BASE_BRANCH="${{ github.event.pull_request.base.ref || github.event.repository.default_branch || 'develop' }}"
           {
             echo '✅ **Performance tests** completed.'
             echo ''
-            echo "**Baseline:** \`${{ env.BASE_BRANCH }}\` | **Update:** PR build (\`${{ env.IMAGE_TAG }}\`)"
+            echo "**Baseline:** \`${BASE_BRANCH}\` | **Update:** PR build (\`${{ env.IMAGE_TAG }}\`)"
             echo ''
           } > perf-comment.md
 
@@ -800,23 +969,6 @@ jobs:
               echo ''
             } >> perf-comment.md
           done < perf-test-scripts.txt
-
-      - name: Cleanup update
-        if: always()
-        run: |
-          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
-          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
-          RELEASE_NAME="ci-${INSTANCE}-perf-update-${RANDOM_SUFFIX}"
-          APP_NS="${RELEASE_NAME}-ns-pm4"
-          helm uninstall "${RELEASE_NAME}" --namespace default 2>/dev/null || true
-          kubectl delete namespace "${APP_NS}" --timeout=120s --ignore-not-found=true || true
-
-      - name: Delete performance node group
-        if: always()
-        run: |
-          export INSTANCE="${{ steps.perf_prep.outputs.instance }}"
-          chmod +x .github/scripts/delete-perf-nodegroup.sh
-          .github/scripts/delete-perf-nodegroup.sh
 
       - name: Comment PR (performance results)
         if: success() && github.event_name == 'pull_request'

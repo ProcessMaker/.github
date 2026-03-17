@@ -5,10 +5,16 @@
 set -euo pipefail
 
 INSTANCE="${INSTANCE:?INSTANCE is required (10-char instance id)}"
+# Optional: baseline | update — must match the suffix used when creating the node group.
+PERF_SUFFIX="${PERF_SUFFIX:-}"
 EKS_CLUSTER_NAME="${EKS_CLUSTER_NAME:-pm4-eng}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
 EFS_SECURITY_GROUP_ID="${EFS_SECURITY_GROUP_ID:-sg-019a2068045d7a240}"
-NODEGROUP_NAME="perf-ci-${INSTANCE}"
+if [ -n "${PERF_SUFFIX}" ]; then
+  NODEGROUP_NAME="perf-ci-${INSTANCE}-${PERF_SUFFIX}"
+else
+  NODEGROUP_NAME="perf-ci-${INSTANCE}"
+fi
 
 if ! aws eks describe-nodegroup \
   --cluster-name "${EKS_CLUSTER_NAME}" \
