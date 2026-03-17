@@ -932,14 +932,14 @@ jobs:
 
       - name: Prepare performance comment body
         run: |
-          # Merge script lists from both artifacts so we compare every test that ran in either job
-          (cat baseline-results/perf-test-scripts.txt 2>/dev/null; cat update-results/perf-test-scripts.txt 2>/dev/null) | sort -u > perf-test-scripts.txt
-          if [ ! -s perf-test-scripts.txt ]; then
-            touch perf-test-scripts.txt
-          fi
-          # Copy result files into current dir (same names as baseline/update jobs produced)
+          # Copy result files first (paths depend on download-artifact putting each artifact in a dir named after the artifact)
           cp baseline-results/baseline-*-k6-results.txt . 2>/dev/null || true
           cp update-results/update-*-k6-results.txt . 2>/dev/null || true
+          # Build list of test_ids from whatever result files we have (robust if perf-test-scripts.txt is missing from artifacts)
+          (ls -1 baseline-*-k6-results.txt 2>/dev/null | sed 's/^baseline-//;s/-k6-results\.txt$//'; \
+           ls -1 update-*-k6-results.txt 2>/dev/null | sed 's/^update-//;s/-k6-results\.txt$//') | sort -u > perf-test-ids.txt
+          echo "Result files after copy:" && ls -1 baseline-*-k6-results.txt update-*-k6-results.txt 2>/dev/null || true
+          echo "Test IDs to report:" && cat perf-test-ids.txt || true
 
           extract_summary() {
             sed -n '/█ TOTAL RESULTS\|TOTAL RESULTS/,/^running (0m/p' "$1" 2>/dev/null | sed '/^running (0m/d' || true
@@ -956,9 +956,8 @@ jobs:
             echo ''
           } > perf-comment.md
 
-          while IFS= read -r script; do
-            [ -z "$script" ] && continue
-            test_id=$(echo "$script" | sed 's|automated-performance-metrics/scripts/||;s|\.js$||;s|/|-|g')
+          while IFS= read -r test_id; do
+            [ -z "$test_id" ] && continue
             BASE_FILE="baseline-${test_id}-k6-results.txt"
             UPD_FILE="update-${test_id}-k6-results.txt"
 
@@ -989,7 +988,7 @@ jobs:
               echo '```'
               echo ''
             } >> perf-comment.md
-          done < perf-test-scripts.txt
+          done < perf-test-ids.txt
 
       - name: Comment PR (performance results)
         if: success() && github.event_name == 'pull_request'
