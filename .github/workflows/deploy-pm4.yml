@@ -483,6 +483,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y k6
 
+      - name: Discover k6 tests
+        run: |
+          find automated-performance-metrics/scripts -name '*.js' -type f | sort > perf-test-scripts.txt
+          if [ ! -s perf-test-scripts.txt ]; then
+            echo "automated-performance-metrics/scripts/Api/users-index.js" > perf-test-scripts.txt
+          fi
+          echo "Discovered k6 tests:"
+          cat perf-test-scripts.txt
+
       - name: Deploy baseline (base branch) and verify
         id: baseline
         env:
@@ -584,7 +593,7 @@ jobs:
           fi
           echo "token=${TOKEN}" >> $GITHUB_OUTPUT
 
-      - name: Run k6 on baseline (users-index)
+      - name: Run k6 on baseline
         run: |
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
           RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
@@ -592,12 +601,17 @@ jobs:
           APP_URL="https://${RELEASE_NAME}.engk8s.processmaker.net"
           TOKEN="${{ steps.token_baseline.outputs.token }}"
           if [ -z "$TOKEN" ]; then
-            echo "Skipping baseline k6: no token" | tee baseline-k6-results.txt
+            echo "Skipping baseline k6: no token"
             exit 0
           fi
           export BASE_PATH="${APP_URL}"
           export BEARER_TOKEN="Bearer ${TOKEN}"
-          k6 run automated-performance-metrics/scripts/Api/users-index.js 2>&1 | tee baseline-k6-results.txt
+          while IFS= read -r script; do
+            [ -z "$script" ] && continue
+            test_id=$(echo "$script" | sed 's|automated-performance-metrics/scripts/||;s|\.js$||;s|/|-|g')
+            echo "Running baseline k6: $script (id: $test_id)"
+            k6 run "$script" 2>&1 | tee "baseline-${test_id}-k6-results.txt" || true
+          done < perf-test-scripts.txt
 
       - name: Cleanup baseline
         if: always()
@@ -713,7 +727,7 @@ jobs:
           fi
           echo "token=${TOKEN}" >> $GITHUB_OUTPUT
 
-      - name: Run k6 on update (users-index)
+      - name: Run k6 on update
         id: k6_update
         run: |
           INSTANCE="${{ steps.perf_prep.outputs.instance }}"
@@ -722,12 +736,17 @@ jobs:
           APP_URL="https://${RELEASE_NAME}.engk8s.processmaker.net"
           TOKEN="${{ steps.token.outputs.token }}"
           if [ -z "$TOKEN" ]; then
-            echo "Skipping update k6: no token" | tee update-k6-results.txt
+            echo "Skipping update k6: no token"
             exit 0
           fi
           export BASE_PATH="${APP_URL}"
           export BEARER_TOKEN="Bearer ${TOKEN}"
-          k6 run automated-performance-metrics/scripts/Api/users-index.js 2>&1 | tee update-k6-results.txt
+          while IFS= read -r script; do
+            [ -z "$script" ] && continue
+            test_id=$(echo "$script" | sed 's|automated-performance-metrics/scripts/||;s|\.js$||;s|/|-|g')
+            echo "Running update k6: $script (id: $test_id)"
+            k6 run "$script" 2>&1 | tee "update-${test_id}-k6-results.txt" || true
+          done < perf-test-scripts.txt
 
       - name: Prepare performance comment body
         run: |
@@ -740,40 +759,47 @@ jobs:
           get_http_duration_avg() { grep -E "^\s+http_req_duration" "$1" 2>/dev/null | head -1 | sed -n 's/.*avg=\([0-9.]*\)ms.*/\1/p'; }
           get_http_failed_pct() { grep -E "^\s+http_req_failed" "$1" 2>/dev/null | head -1 | sed -n 's/.*: \([0-9.]*\)%.*/\1/p'; }
 
-          BASE_FILE=baseline-k6-results.txt
-          UPD_FILE=update-k6-results.txt
-
-          # Parsed values for comparison (with fallbacks)
-          base_iter="$(get_metric 'iterations' "$BASE_FILE" 2>/dev/null || echo '—')"
-          upd_iter="$(get_metric 'iterations' "$UPD_FILE" 2>/dev/null || echo '—')"
-          base_dur="$(get_http_duration_avg "$BASE_FILE" 2>/dev/null || echo '—')"
-          upd_dur="$(get_http_duration_avg "$UPD_FILE" 2>/dev/null || echo '—')"
-          base_fail="$(get_http_failed_pct "$BASE_FILE" 2>/dev/null || echo '—')"
-          upd_fail="$(get_http_failed_pct "$UPD_FILE" 2>/dev/null || echo '—')"
-
           {
             echo '✅ **Performance tests** completed.'
             echo ''
             echo "**Baseline:** \`${{ env.BASE_BRANCH }}\` | **Update:** PR build (\`${{ env.IMAGE_TAG }}\`)"
             echo ''
-            echo '### Comparison (users-index)'
-            echo ''
-            echo '| Metric | Baseline | Update |'
-            echo '|--------|----------|--------|'
-            echo "| iterations | \`${base_iter}\` | \`${upd_iter}\` |"
-            echo "| http_req_duration (avg ms) | \`${base_dur}\` | \`${upd_dur}\` |"
-            echo "| http_req_failed (%) | \`${base_fail}\` | \`${upd_fail}\` |"
-            echo ''
-            echo '### k6 summary — baseline'
-            echo '```'
-            extract_summary "$BASE_FILE" | cat -s 2>/dev/null || echo '(no summary)'
-            echo '```'
-            echo ''
-            echo '### k6 summary — update (PR build)'
-            echo '```'
-            extract_summary "$UPD_FILE" | cat -s 2>/dev/null || echo '(no summary)'
-            echo '```'
           } > perf-comment.md
+
+          while IFS= read -r script; do
+            [ -z "$script" ] && continue
+            test_id=$(echo "$script" | sed 's|automated-performance-metrics/scripts/||;s|\.js$||;s|/|-|g')
+            BASE_FILE="baseline-${test_id}-k6-results.txt"
+            UPD_FILE="update-${test_id}-k6-results.txt"
+
+            base_iter="$(get_metric 'iterations' "$BASE_FILE" 2>/dev/null || echo '—')"
+            upd_iter="$(get_metric 'iterations' "$UPD_FILE" 2>/dev/null || echo '—')"
+            base_dur="$(get_http_duration_avg "$BASE_FILE" 2>/dev/null || echo '—')"
+            upd_dur="$(get_http_duration_avg "$UPD_FILE" 2>/dev/null || echo '—')"
+            base_fail="$(get_http_failed_pct "$BASE_FILE" 2>/dev/null || echo '—')"
+            upd_fail="$(get_http_failed_pct "$UPD_FILE" 2>/dev/null || echo '—')"
+
+            {
+              echo "### Comparison (\`${test_id}\`)"
+              echo ''
+              echo '| Metric | Baseline | Update |'
+              echo '|--------|----------|--------|'
+              echo "| iterations | \`${base_iter}\` | \`${upd_iter}\` |"
+              echo "| http_req_duration (avg ms) | \`${base_dur}\` | \`${upd_dur}\` |"
+              echo "| http_req_failed (%) | \`${base_fail}\` | \`${upd_fail}\` |"
+              echo ''
+              echo "### k6 summary — baseline (\`${test_id}\`)"
+              echo '```'
+              extract_summary "$BASE_FILE" | cat -s 2>/dev/null || echo '(no summary)'
+              echo '```'
+              echo ''
+              echo "### k6 summary — update (\`${test_id}\`)"
+              echo '```'
+              extract_summary "$UPD_FILE" | cat -s 2>/dev/null || echo '(no summary)'
+              echo '```'
+              echo ''
+            } >> perf-comment.md
+          done < perf-test-scripts.txt
 
       - name: Cleanup update
         if: always()
