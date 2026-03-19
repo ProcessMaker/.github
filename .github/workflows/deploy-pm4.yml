@@ -606,7 +606,7 @@ jobs:
             exit 0
           fi
           export BASE_PATH="${APP_URL}"
-          export BEARER_TOKEN="Bearer ${TOKEN}"
+          export BEARER_TOKEN="${TOKEN}"
           while IFS= read -r script; do
             [ -z "$script" ] && continue
             test_id=$(echo "$script" | sed 's|automated-performance-metrics/scripts/||;s|\.js$||;s|/|-|g')
@@ -870,7 +870,7 @@ jobs:
             exit 0
           fi
           export BASE_PATH="${APP_URL}"
-          export BEARER_TOKEN="Bearer ${TOKEN}"
+          export BEARER_TOKEN="${TOKEN}"
           while IFS= read -r script; do
             [ -z "$script" ] && continue
             test_id=$(echo "$script" | sed 's|automated-performance-metrics/scripts/||;s|\.js$||;s|/|-|g')
