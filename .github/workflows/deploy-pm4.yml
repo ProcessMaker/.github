@@ -99,9 +99,37 @@ jobs:
           echo ""
           echo "=== Rate limit check complete ==="
 
+  validatePerfMetricsTags:
+    name: validate-performance-metrics-tags
+    if: github.event.action != 'closed' && inputs.delete == '' && contains(github.event.pull_request.body, 'ci:performance-tests')
+    runs-on: ${{ vars.RUNNER }}
+    steps:
+      - name: Checkout .github repo
+        uses: actions/checkout@v4
+        with:
+          repository: processmaker/.github
+          ref: automated-performance-tests
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Checkout automated-performance-metrics
+        uses: actions/checkout@v4
+        with:
+          repository: ProcessMaker/automated-performance-metrics
+          ref: main
+          path: automated-performance-metrics
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Validate ci:performance-metrics PR body tags
+        env:
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
+        run: |
+          chmod +x .github/scripts/validate-perf-metrics-tags.sh
+          .github/scripts/validate-perf-metrics-tags.sh automated-performance-metrics
+
   imageEKSBase:
     name: build-docker-image-EKS-base
     if: github.event.action != 'closed' && inputs.delete == '' && contains(github.event.pull_request.body, 'ci:performance-tests')
+    needs: validatePerfMetricsTags
     runs-on: ${{ vars.RUNNER }}
     steps:
       - name: Checkout
@@ -383,7 +411,7 @@ jobs:
   perfBaseline:
     name: perf-baseline
     if: github.event.action != 'closed' && inputs.delete == '' && contains(github.event.pull_request.body, 'ci:performance-tests')
-    needs: [imageEKS, imageEKSBase]
+    needs: [validatePerfMetricsTags, imageEKS, imageEKSBase]
     runs-on: ${{ vars.RUNNER }}
     steps:
       - name: Checkout .github repo
@@ -396,6 +424,21 @@ jobs:
         uses: ./.github/actions/common
         with:
           token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Checkout automated-performance-metrics
+        uses: actions/checkout@v4
+        with:
+          repository: ProcessMaker/automated-performance-metrics
+          ref: main
+          path: automated-performance-metrics
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Discover k6 tests (validate ci:performance-metrics filters)
+        env:
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
+        run: |
+          chmod +x .github/scripts/validate-perf-metrics-tags.sh
+          .github/scripts/validate-perf-metrics-tags.sh automated-performance-metrics perf-test-scripts.txt
 
       - name: Install pm4-tools
         run: |
@@ -468,14 +511,6 @@ jobs:
           done
           kubectl get nodes -l "performance=ci-${INSTANCE}-baseline"
 
-      - name: Checkout automated-performance-metrics
-        uses: actions/checkout@v4
-        with:
-          repository: ProcessMaker/automated-performance-metrics
-          ref: main
-          path: automated-performance-metrics
-          token: ${{ secrets.GIT_TOKEN }}
-
       - name: Install k6
         run: |
           sudo gpg -k
@@ -483,15 +518,6 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
           sudo apt-get update
           sudo apt-get install -y k6
-
-      - name: Discover k6 tests
-        run: |
-          find automated-performance-metrics/scripts -name '*.js' -type f | sort > perf-test-scripts.txt
-          if [ ! -s perf-test-scripts.txt ]; then
-            echo "automated-performance-metrics/scripts/Api/users-index.js" > perf-test-scripts.txt
-          fi
-          echo "Discovered k6 tests:"
-          cat perf-test-scripts.txt
 
       - name: Deploy baseline (base branch) and verify
         id: baseline
@@ -650,7 +676,7 @@ jobs:
   perfUpdate:
     name: perf-update
     if: github.event.action != 'closed' && inputs.delete == '' && contains(github.event.pull_request.body, 'ci:performance-tests')
-    needs: [imageEKS, imageEKSBase]
+    needs: [validatePerfMetricsTags, imageEKS, imageEKSBase]
     runs-on: ${{ vars.RUNNER }}
     steps:
       - name: Checkout .github repo
@@ -663,6 +689,21 @@ jobs:
         uses: ./.github/actions/common
         with:
           token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Checkout automated-performance-metrics
+        uses: actions/checkout@v4
+        with:
+          repository: ProcessMaker/automated-performance-metrics
+          ref: main
+          path: automated-performance-metrics
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Discover k6 tests (validate ci:performance-metrics filters)
+        env:
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
+        run: |
+          chmod +x .github/scripts/validate-perf-metrics-tags.sh
+          .github/scripts/validate-perf-metrics-tags.sh automated-performance-metrics perf-test-scripts.txt
 
       - name: Install pm4-tools
         run: |
@@ -731,14 +772,6 @@ jobs:
           done
           kubectl get nodes -l "performance=ci-${INSTANCE}-update"
 
-      - name: Checkout automated-performance-metrics
-        uses: actions/checkout@v4
-        with:
-          repository: ProcessMaker/automated-performance-metrics
-          ref: main
-          path: automated-performance-metrics
-          token: ${{ secrets.GIT_TOKEN }}
-
       - name: Install k6
         run: |
           sudo gpg -k
@@ -746,15 +779,6 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
           sudo apt-get update
           sudo apt-get install -y k6
-
-      - name: Discover k6 tests
-        run: |
-          find automated-performance-metrics/scripts -name '*.js' -type f | sort > perf-test-scripts.txt
-          if [ ! -s perf-test-scripts.txt ]; then
-            echo "automated-performance-metrics/scripts/Api/users-index.js" > perf-test-scripts.txt
-          fi
-          echo "Discovered k6 tests:"
-          cat perf-test-scripts.txt
 
       - name: Deploy update (PR build) and verify
         id: update
