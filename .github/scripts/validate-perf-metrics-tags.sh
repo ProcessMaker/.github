@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Validate ci:performance-metrics:* entries in PR body against // @perf-labels:
+# Validate ci:performance-tests:* label tokens in PR body against // @perf-labels:
 # in k6 scripts under automated-performance-metrics/scripts. Optionally write
 # perf-test-scripts.txt (all scripts whose @perf-labels intersect requested labels).
 # Usage: PR_BODY='...' ./validate-perf-metrics-tags.sh <metrics-dir> [perf-test-scripts-outfile]
@@ -51,8 +51,8 @@ sort -u "$ALL_VALID_LABELS" -o "$ALL_VALID_LABELS"
 
 : >"$REQUESTED"
 while IFS= read -r line || [[ -n "${line:-}" ]]; do
-  [[ "$line" != *ci:performance-metrics* ]] && continue
-  rest="${line#*ci:performance-metrics}"
+  [[ "$line" != *ci:performance-tests* ]] && continue
+  rest="${line#*ci:performance-tests}"
   rest="${rest#:}"
   rest="${rest#"${rest%%[![:space:]]*}"}"
   [[ -z "${rest// /}" ]] && continue
@@ -66,7 +66,7 @@ done <<<"$(printf '%s\n' "${PR_BODY:-}" | tr '\r' '\n')"
 sort -u "$REQUESTED" -o "$REQUESTED"
 
 if [[ ! -s "$REQUESTED" ]]; then
-  echo "No ci:performance-metrics label filters in PR body; all discovered k6 scripts will run."
+  echo "No ci:performance-tests label filters in PR body; all discovered k6 scripts will run."
   if [[ -n "$OUTFILE" ]]; then
     find "$METRICS_DIR/scripts" -name '*.js' -type f | sort >"$OUTFILE"
     if [[ ! -s "$OUTFILE" ]]; then
@@ -82,7 +82,7 @@ BAD=0
 while IFS= read -r want || [[ -n "${want:-}" ]]; do
   [[ -z "$want" ]] && continue
   if ! grep -qxF "$want" "$ALL_VALID_LABELS" 2>/dev/null; then
-    echo "::error::Unknown ci:performance-metrics label '${want}'. No k6 script declares this in // @perf-labels: ..."
+    echo "::error::Unknown ci:performance-tests label '${want}'. No k6 script declares this in // @perf-labels: ..."
     echo -n "Declared labels across scripts: "
     tr '\n' ' ' <"$ALL_VALID_LABELS" | sed 's/[[:space:]]*$//'
     echo

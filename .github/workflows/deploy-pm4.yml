@@ -119,7 +119,7 @@ jobs:
           path: automated-performance-metrics
           token: ${{ secrets.GIT_TOKEN }}
 
-      - name: Validate ci:performance-metrics PR body tags
+      - name: Validate ci:performance-tests @perf-labels from PR body
         env:
           PR_BODY: ${{ github.event.pull_request.body || '' }}
         run: |
@@ -433,7 +433,7 @@ jobs:
           path: automated-performance-metrics
           token: ${{ secrets.GIT_TOKEN }}
 
-      - name: Discover k6 tests (validate ci:performance-metrics filters)
+      - name: Discover k6 tests (validate ci:performance-tests @perf-labels)
         env:
           PR_BODY: ${{ github.event.pull_request.body || '' }}
         run: |
@@ -698,7 +698,7 @@ jobs:
           path: automated-performance-metrics
           token: ${{ secrets.GIT_TOKEN }}
 
-      - name: Discover k6 tests (validate ci:performance-metrics filters)
+      - name: Discover k6 tests (validate ci:performance-tests @perf-labels)
         env:
           PR_BODY: ${{ github.event.pull_request.body || '' }}
         run: |
@@ -943,6 +943,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      actions: write
     steps:
       - name: Download baseline results
         uses: actions/download-artifact@v4
@@ -954,63 +955,138 @@ jobs:
         with:
           name: update-results
 
-      - name: Prepare performance comment body
+      - name: Prepare performance comment body and bundle raw data
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          # Copy result files first (paths depend on download-artifact putting each artifact in a dir named after the artifact)
+          mkdir -p perf-data/baseline perf-data/update
+          cp baseline-results/* perf-data/baseline/ 2>/dev/null || true
+          cp update-results/* perf-data/update/ 2>/dev/null || true
+
           cp baseline-results/baseline-*-k6-results.txt . 2>/dev/null || true
           cp update-results/update-*-k6-results.txt . 2>/dev/null || true
-          # Build list of test_ids from whatever result files we have (robust if perf-test-scripts.txt is missing from artifacts)
           (ls -1 baseline-*-k6-results.txt 2>/dev/null | sed 's/^baseline-//;s/-k6-results\.txt$//'; \
            ls -1 update-*-k6-results.txt 2>/dev/null | sed 's/^update-//;s/-k6-results\.txt$//') | sort -u > perf-test-ids.txt
 
-          extract_summary() {
-            sed -n '/█ TOTAL RESULTS\|TOTAL RESULTS/,/^running (0m/p' "$1" 2>/dev/null | sed '/^running (0m/d' || true
-          }
           get_metric() { grep -E "^\s+$1\.+" "$2" 2>/dev/null | head -1 | awk '{ for(i=2;i<=NF;i++) printf "%s%s", $i, (i<NF?" ":""); print "" }' | xargs; }
+          get_iterations_count() { grep -E "^\s+iterations\.+" "$1" 2>/dev/null | head -1 | awk '{print $2}'; }
           get_http_duration_avg() { grep -E "^\s+http_req_duration" "$1" 2>/dev/null | head -1 | sed -n 's/.*avg=\([0-9.]*\)ms.*/\1/p'; }
           get_http_failed_pct() { grep -E "^\s+http_req_failed" "$1" 2>/dev/null | head -1 | sed -n 's/.*: \([0-9.]*\)%.*/\1/p'; }
+          get_k6_wall_label() { grep -oE 'running \([^)]+\)' "$1" 2>/dev/null | tail -1 | sed 's/^running (//;s/)$//' || true; }
 
-          BASE_BRANCH="${{ github.event.pull_request.base.ref || github.event.repository.default_branch || 'develop' }}"
+          wall_to_sec() {
+            t="$1"
+            [ -z "$t" ] && echo "" && return
+            if echo "$t" | grep -qE '[0-9]+m'; then
+              echo "$t" | awk -F'm' '{gsub(/s/,"",$2); if ($2=="") $2=0; print $1*60+$2}'
+            else
+              echo "$t" | sed 's/s$//' | awk '{print $1+0}'
+            fi
+          }
+
+          fmt_sec() {
+            s="$1"
+            if [ -z "$s" ] || ! awk -v s="$s" 'BEGIN{exit !(s>0)}' 2>/dev/null; then echo "—"; return; fi
+            awk -v s="$s" 'BEGIN{
+              m=int(s/60); r=s-m*60;
+              if (m>0) printf "%dm%.1fs", m, r+0; else printf "%.1fs", s+0
+            }'
+          }
+
+          pct_diff_ratio() {
+            b="$1" u="$2"
+            awk -v b="$b" -v u="$u" 'BEGIN{
+              if (b=="" || u=="") { print "—"; exit }
+              if (b !~ /^[0-9]+(\.[0-9]+)?$/ || u !~ /^[0-9]+(\.[0-9]+)?$/) { print "—"; exit }
+              if (b+0 <= 0) { print "—"; exit }
+              printf "%+.1f%%", ((u-b)/b)*100
+            }'
+          }
+
+          pct_diff_fail() {
+            b="$1" u="$2"
+            awk -v b="$b" -v u="$u" 'BEGIN{
+              if (b=="" || u=="") { print "—"; exit }
+              if (b !~ /^[0-9]+(\.[0-9]+)?$/ || u !~ /^[0-9]+(\.[0-9]+)?$/) { print "—"; exit }
+              if (b+0==0 && u+0==0) { print "0.0%"; exit }
+              if (b+0==0) { print "—"; exit }
+              printf "%+.1f%%", ((u-b)/b)*100
+            }'
+          }
+
+          sum_base=0
+          sum_upd=0
+
           {
-            echo '✅ **Performance tests** completed.'
-            echo ''
-            echo "**Baseline:** \`${BASE_BRANCH}\` | **Update:** PR build (\`${{ env.IMAGE_TAG }}\`)"
-            echo ''
+            echo "| Test | Metric | Baseline | Update | Δ % | Total test time |"
+            echo "|------|--------|----------|--------|-----|-----------------|"
           } > perf-comment.md
 
-          while IFS= read -r test_id; do
-            [ -z "$test_id" ] && continue
-            BASE_FILE="baseline-${test_id}-k6-results.txt"
-            UPD_FILE="update-${test_id}-k6-results.txt"
+          if [ ! -s perf-test-ids.txt ]; then
+            echo "| — | (no k6 result files) | — | — | — | — |" >> perf-comment.md
+          else
+            while IFS= read -r test_id; do
+              [ -z "$test_id" ] && continue
+              BASE_FILE="baseline-${test_id}-k6-results.txt"
+              UPD_FILE="update-${test_id}-k6-results.txt"
 
-            base_iter="$(get_metric 'iterations' "$BASE_FILE" 2>/dev/null || echo '—')"
-            upd_iter="$(get_metric 'iterations' "$UPD_FILE" 2>/dev/null || echo '—')"
-            base_dur="$(get_http_duration_avg "$BASE_FILE" 2>/dev/null || echo '—')"
-            upd_dur="$(get_http_duration_avg "$UPD_FILE" 2>/dev/null || echo '—')"
-            base_fail="$(get_http_failed_pct "$BASE_FILE" 2>/dev/null || echo '—')"
-            upd_fail="$(get_http_failed_pct "$UPD_FILE" 2>/dev/null || echo '—')"
+              base_iter="$(get_metric 'iterations' "$BASE_FILE" 2>/dev/null || true)"; [ -z "${base_iter:-}" ] && base_iter="—"
+              upd_iter="$(get_metric 'iterations' "$UPD_FILE" 2>/dev/null || true)"; [ -z "${upd_iter:-}" ] && upd_iter="—"
+              base_iter_n="$(get_iterations_count "$BASE_FILE" 2>/dev/null || true)"
+              upd_iter_n="$(get_iterations_count "$UPD_FILE" 2>/dev/null || true)"
 
-            {
-              echo "### Comparison (\`${test_id}\`)"
-              echo ''
-              echo '| Metric | Baseline | Update |'
-              echo '|--------|----------|--------|'
-              echo "| iterations | \`${base_iter}\` | \`${upd_iter}\` |"
-              echo "| http_req_duration (avg ms) | \`${base_dur}\` | \`${upd_dur}\` |"
-              echo "| http_req_failed (%) | \`${base_fail}\` | \`${upd_fail}\` |"
-              echo ''
-              echo "### k6 summary — baseline (\`${test_id}\`)"
-              echo '```'
-              extract_summary "$BASE_FILE" | cat -s 2>/dev/null || echo '(no summary)'
-              echo '```'
-              echo ''
-              echo "### k6 summary — update (\`${test_id}\`)"
-              echo '```'
-              extract_summary "$UPD_FILE" | cat -s 2>/dev/null || echo '(no summary)'
-              echo '```'
-              echo ''
-            } >> perf-comment.md
-          done < perf-test-ids.txt
+              base_dur="$(get_http_duration_avg "$BASE_FILE" 2>/dev/null || true)"; [ -z "${base_dur:-}" ] && base_dur="—"
+              upd_dur="$(get_http_duration_avg "$UPD_FILE" 2>/dev/null || true)"; [ -z "${upd_dur:-}" ] && upd_dur="—"
+
+              base_fail="$(get_http_failed_pct "$BASE_FILE" 2>/dev/null || true)"; [ -z "${base_fail:-}" ] && base_fail="—"
+              upd_fail="$(get_http_failed_pct "$UPD_FILE" 2>/dev/null || true)"; [ -z "${upd_fail:-}" ] && upd_fail="—"
+
+              pd_iter="$(pct_diff_ratio "$base_iter_n" "$upd_iter_n")"
+              pd_dur="$(pct_diff_ratio "$base_dur" "$upd_dur")"
+              pd_fail="$(pct_diff_fail "$base_fail" "$upd_fail")"
+
+              wall_b="$(get_k6_wall_label "$BASE_FILE")"
+              wall_u="$(get_k6_wall_label "$UPD_FILE")"
+              sec_b="$(wall_to_sec "$wall_b")"
+              sec_u="$(wall_to_sec "$wall_u")"
+              [ -n "$sec_b" ] && sum_base="$(awk -v a="$sum_base" -v b="$sec_b" 'BEGIN{print a+b}')"
+              [ -n "$sec_u" ] && sum_upd="$(awk -v a="$sum_upd" -v b="$sec_u" 'BEGIN{print a+b}')"
+              wall_display_b="${wall_b:-—}"
+              wall_display_u="${wall_u:-—}"
+              if [ -n "$sec_b" ] && [ -n "$sec_u" ]; then
+                pd_wall="$(pct_diff_ratio "$sec_b" "$sec_u")"
+                total_bu="$(awk -v b="$sec_b" -v u="$sec_u" 'BEGIN{print b+u}')"
+                total_fmt="$(fmt_sec "$total_bu")"
+              else
+                pd_wall="—"
+                total_fmt="—"
+              fi
+
+              echo "| \`${test_id}\` | iterations | \`${base_iter}\` | \`${upd_iter}\` | \`${pd_iter}\` | — |" >> perf-comment.md
+              echo "| \`${test_id}\` | http_req_duration (avg ms) | \`${base_dur}\` | \`${upd_dur}\` | \`${pd_dur}\` | — |" >> perf-comment.md
+              echo "| \`${test_id}\` | http_req_failed (%) | \`${base_fail}\` | \`${upd_fail}\` | \`${pd_fail}\` | — |" >> perf-comment.md
+              echo "| \`${test_id}\` | k6 wall time | \`${wall_display_b}\` | \`${wall_display_u}\` | \`${pd_wall}\` | \`${total_fmt}\` |" >> perf-comment.md
+            done < perf-test-ids.txt
+
+            total_suite="$(awk -v b="$sum_base" -v u="$sum_upd" 'BEGIN{print b+u}')"
+            pd_suite="$(pct_diff_ratio "$sum_base" "$sum_upd")"
+            fmt_b="$(fmt_sec "$sum_base")"
+            fmt_u="$(fmt_sec "$sum_upd")"
+            fmt_all="$(fmt_sec "$total_suite")"
+            echo "| **All tests** | **sum of k6 wall times** | \`${fmt_b}\` | \`${fmt_u}\` | \`${pd_suite}\` | \`${fmt_all}\` |" >> perf-comment.md
+          fi
+
+          {
+            echo ''
+            echo "Raw k6 logs and scripts: [workflow run artifacts](${RUN_URL}) (includes \`baseline-results\`, \`update-results\`, and \`performance-k6-bundle\`)."
+          } >> perf-comment.md
+
+      - name: Upload consolidated performance bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-k6-bundle
+          path: perf-data
+          if-no-files-found: warn
 
       - name: Comment PR (performance results)
         if: success() && github.event_name == 'pull_request'
@@ -1018,9 +1094,10 @@ jobs:
         with:
           script: |
             const fs = require('fs');
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
             const body = fs.existsSync('perf-comment.md')
               ? fs.readFileSync('perf-comment.md', 'utf8')
-              : '✅ **Performance tests** completed (k6 results not captured).';
+              : `| Test | Metric | Baseline | Update | Δ % | Total test time |\n|------|--------|----------|--------|-----|-----------------|\n| — | (k6 results not captured) | — | — | — | — |\n\nRaw output: [workflow run artifacts](${runUrl})`;
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
