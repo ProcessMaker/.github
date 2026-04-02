@@ -31,6 +31,8 @@ env:
   GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
   BUILD_BASE: ${{ (contains(github.event.pull_request.body, 'ci:build-base') || github.event_name == 'schedule') && '1' || '0' }}
   MULTITENANCY: ${{ (contains(github.event.pull_request.body, 'ci:multitenancy')) && 'true' || 'false' }}
+  # PMAI gRPC/RAG service (cluster-dependencies namespaces). Override with ci:pm4_ai:dev in the PR body.
+  PMAI_OPENAI_HOST: ${{ contains(github.event.pull_request.body || '', 'ci:pm4_ai:dev') && 'pmai-svc.pmai-system-dev.svc.cluster.local' || 'pmai-svc.pmai-system.svc.cluster.local' }}
   BASE_IMAGE: ${{ secrets.REGISTRY_HOST }}/processmaker/processmaker:base
   CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
   # K8S_BRANCH: ${{ contains(github.event.pull_request.body, 'ci:next') && 'next' || 'release-2024-fall' }}
@@ -261,6 +263,7 @@ jobs:
           sed -i "s#{{MYSQL_USER}}#$RDS_ADMIN_USERNAME#g" .github/templates/instance.yaml
           sed -i "s#{{MYSQL_PASSWORD}}#$RDS_ADMIN_PASSWORD#g" .github/templates/instance.yaml
           sed -i "s#{{MULTITENANCY}}#$MULTITENANCY#g" .github/templates/instance.yaml
+          sed -i "s#{{PMAI_OPENAI_HOST}}#$PMAI_OPENAI_HOST#g" .github/templates/instance.yaml
           sed -i "s#{{MYSQL_USERNAME}}#$RDS_ADMIN_USERNAME#g" .github/templates/db.yaml
           sed -i "s#{{MYSQL_PASSWORD}}#$RDS_ADMIN_PASSWORD#g" .github/templates/db.yaml
           echo "=== Checking instance.yaml after replacements ==="
@@ -488,6 +491,7 @@ jobs:
           sed -i "s#{{CUSTOMER_LICENSES_PAT}}#${{ secrets.CUSTOMER_LICENSES_PAT }}#g" .github/templates/instance-perf.yaml
           sed -i "s#{{KEYCLOAK_CLIENT_SECRET}}#${{ secrets.KEYCLOAK_CLIENT_SECRET }}#g" .github/templates/instance-perf.yaml
           sed -i "s#{{KEYCLOAK_PASSWORD}}#${{ secrets.KEYCLOAK_PASSWORD }}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{PMAI_OPENAI_HOST}}#$PMAI_OPENAI_HOST#g" .github/templates/instance-perf.yaml
 
       - name: Create performance node group (baseline)
         run: |
@@ -749,6 +753,7 @@ jobs:
           sed -i "s#{{CUSTOMER_LICENSES_PAT}}#${{ secrets.CUSTOMER_LICENSES_PAT }}#g" .github/templates/instance-perf.yaml
           sed -i "s#{{KEYCLOAK_CLIENT_SECRET}}#${{ secrets.KEYCLOAK_CLIENT_SECRET }}#g" .github/templates/instance-perf.yaml
           sed -i "s#{{KEYCLOAK_PASSWORD}}#${{ secrets.KEYCLOAK_PASSWORD }}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{PMAI_OPENAI_HOST}}#$PMAI_OPENAI_HOST#g" .github/templates/instance-perf.yaml
 
       - name: Create performance node group (update)
         run: |
