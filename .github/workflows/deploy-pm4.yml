@@ -104,6 +104,9 @@ jobs:
     if: contains(github.event.pull_request.body, 'ci:deploy')
     needs: imageEKS
     runs-on: ${{ vars.RUNNER }}
+    outputs:
+      instance: ${{ steps.deploy-instance.outputs.instance }}
+      instance_url: ${{ steps.deploy-instance.outputs.instance_url }}
     steps:
       - name: Checkout .github repo
         uses: actions/checkout@v4
@@ -141,6 +144,7 @@ jobs:
       
       
       - name: Deploy instance EKS
+        id: deploy-instance
         env:
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
           CURRENT_DATE: ${{ env.CURRENT_DATE }}
@@ -193,6 +197,10 @@ jobs:
             export INSTANCE_URL="https://ci-$instance.engk8s.processmaker.net"
           fi
           echo "Instance URL: $INSTANCE_URL"
+          {
+            echo "instance=$instance"
+            echo "instance_url=$INSTANCE_URL"
+          } >> "$GITHUB_OUTPUT"
           bash .github/scripts/gh_comment.sh "$CI_PROJECT" "$pull_req_id"
 
   runAPITest:
@@ -236,8 +244,7 @@ jobs:
       
       - name: Run the API tests
         run: |
-          INSTANCE=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
-          namespace="ci-$INSTANCE-ns-pm4"
+          namespace="ci-${{ needs.deployEKS.outputs.instance }}-ns-pm4"
           pr_body=$(jq -r .pull_request.body < "$GITHUB_EVENT_PATH" | base64)
           kubectl get pods --namespace=$namespace
           pod_names=$(kubectl get pods --namespace=$namespace --field-selector=status.phase=Running -o jsonpath="{.items[*].metadata.name}" | tr ' ' '\n' | grep -E '(-processmaker-scheduler-)')
@@ -275,6 +282,32 @@ jobs:
                -H "Accept: application/vnd.github.v3+json" \
                -d "$json_payload" \
                "${URL}"
+
+  runTestbench:
+    name: Run Testbench
+    needs: [deployEKS]
+    if: contains(github.event.pull_request.body, 'ci:run-testbench')
+    runs-on: ${{ vars.RUNNER }}
+    steps:
+      - name: Checkout testbench
+        uses: actions/checkout@v4
+        with:
+          repository: ProcessMaker/testbench
+          path: testbench
+
+      - name: Run testbench
+        working-directory: testbench
+        env:
+          SITE_NAME: CI
+          URL: ${{ needs.deployEKS.outputs.instance_url }}
+          INSTANCE_PASSWORD: ${{ secrets.CI_INSTANCE_PASSWORD }}
+          CONTEXT_PATH: ./context
+          TCP_TUNNELS: "mailserver:587 mailserver:993"
+        run: |
+          export USER_GROUP="$(id -u):$(id -g)"
+          chmod +x ./start.sh
+          ./start.sh
+
   deleteEKS:
     name: Delete Instance
     if: github.event.action == 'closed' || inputs.delete != ''
