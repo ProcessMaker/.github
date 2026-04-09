@@ -105,9 +105,6 @@ jobs:
     if: contains(github.event.pull_request.body, 'ci:deploy')
     needs: imageEKS
     runs-on: ${{ vars.RUNNER }}
-    outputs:
-      instance: ${{ steps.deploy-instance.outputs.instance }}
-      instance_url: ${{ steps.deploy-instance.outputs.instance_url }}
     steps:
       - name: Checkout .github repo
         uses: actions/checkout@v4
@@ -145,7 +142,6 @@ jobs:
       
       
       - name: Deploy instance EKS
-        id: deploy-instance
         env:
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
           CURRENT_DATE: ${{ env.CURRENT_DATE }}
@@ -194,20 +190,14 @@ jobs:
           echo "=== Checking db.yaml after replacements ==="
           cat .github/templates/db.yaml
           chmod +x .github/scripts/deploy-instance.sh
+          fi
           bash .github/scripts/deploy-instance.sh
-          fi
           if [ "$MULTITENANCY" = "true" ]; then
-            export INSTANCE_URL_PREFIX="https://tenant-1.ci-$instance"
+            export INSTANCE_URL="https://tenant-1.ci-$instance.engk8s.processmaker.net"
           else
-            export INSTANCE_URL_PREFIX="https://ci-$instance"
+            export INSTANCE_URL="https://ci-$instance.engk8s.processmaker.net"
           fi
-          export INSTANCE_URL="${INSTANCE_URL_PREFIX}.engk8s.processmaker.net"
           echo "Instance URL: $INSTANCE_URL"
-          echo "INSTANCE_URL_PREFIX: $INSTANCE_URL_PREFIX"
-          {
-            echo "instance=$instance"
-            echo "instance_url_prefix=$INSTANCE_URL_PREFIX"
-          } >> "$GITHUB_OUTPUT"
           bash .github/scripts/gh_comment.sh "$CI_PROJECT" "$pull_req_id"
 
   runAPITest:
@@ -251,7 +241,8 @@ jobs:
       
       - name: Run the API tests
         run: |
-          namespace="ci-${{ needs.deployEKS.outputs.instance }}-ns-pm4"
+          INSTANCE=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
+          namespace="ci-$INSTANCE-ns-pm4"
           pr_body=$(jq -r .pull_request.body < "$GITHUB_EVENT_PATH" | base64)
           kubectl get pods --namespace=$namespace
           pod_names=$(kubectl get pods --namespace=$namespace --field-selector=status.phase=Running -o jsonpath="{.items[*].metadata.name}" | tr ' ' '\n' | grep -E '(-processmaker-scheduler-)')
@@ -306,11 +297,18 @@ jobs:
         working-directory: testbench
         env:
           SITE_NAME: CI
-          URL: ${{ needs.deployEKS.outputs.instance_url_prefix }}.engk8s.processmaker.net
           INSTANCE_PASSWORD: ${{ secrets.CI_INSTANCE_PASSWORD }}
           CONTEXT_PATH: ./context
           TCP_TUNNELS: "mailserver:587 mailserver:993"
         run: |
+          instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
+          echo "INSTANCE: $instance"
+          if [ "${{ env.MULTITENANCY }}" = "true" ]; then
+            export URL="https://tenant-1.ci-$instance.engk8s.processmaker.net"
+          else
+            export URL="https://ci-$instance.engk8s.processmaker.net"
+          fi
+          echo "URL: $URL"
           export USER_GROUP="$(id -u):$(id -g)"
           chmod +x ./start.sh
           ./start.sh
