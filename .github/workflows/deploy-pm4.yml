@@ -190,8 +190,8 @@ jobs:
           echo "=== Checking db.yaml after replacements ==="
           cat .github/templates/db.yaml
           chmod +x .github/scripts/deploy-instance.sh
-          fi
           bash .github/scripts/deploy-instance.sh
+          fi
           if [ "$MULTITENANCY" = "true" ]; then
             export INSTANCE_URL="https://tenant-1.ci-$instance.engk8s.processmaker.net"
           else
