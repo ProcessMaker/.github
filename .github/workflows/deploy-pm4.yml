@@ -33,6 +33,7 @@ env:
   MULTITENANCY: ${{ (contains(github.event.pull_request.body, 'ci:multitenancy')) && 'true' || 'false' }}
   BASE_IMAGE: ${{ secrets.REGISTRY_HOST }}/processmaker/processmaker:base
   CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
+  SKIP_REDEPLOY: ${{ (contains(github.event.pull_request.body, 'ci:skip-redeploy')) && 'true' || 'false' }}
   # K8S_BRANCH: ${{ contains(github.event.pull_request.body, 'ci:next') && 'next' || 'release-2024-fall' }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.delete }}
@@ -173,6 +174,9 @@ jobs:
           instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
           echo "INSTANCE: $instance"
           echo "IMAGE_TAG: $IMAGE_TAG"
+          
+          if [[ "${{ env.SKIP_REDEPLOY }}" != "true" ]]; then
+
           sed -i "s#{{INSTANCE}}#$instance#g" .github/scripts/deploy-instance.sh
           sed -i "s#{{INSTANCE}}#$instance#g" .github/templates/instance.yaml
           sed -i "s#{{INSTANCE}}#$instance#g" .github/templates/db.yaml
@@ -191,6 +195,7 @@ jobs:
           cat .github/templates/db.yaml
           chmod +x .github/scripts/deploy-instance.sh
           bash .github/scripts/deploy-instance.sh
+          fi
           if [ "$MULTITENANCY" = "true" ]; then
             export INSTANCE_URL_PREFIX="https://tenant-1.ci-$instance"
           else
