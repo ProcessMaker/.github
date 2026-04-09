@@ -192,14 +192,16 @@ jobs:
           chmod +x .github/scripts/deploy-instance.sh
           bash .github/scripts/deploy-instance.sh
           if [ "$MULTITENANCY" = "true" ]; then
-            export INSTANCE_URL="https://tenant-1.ci-$instance.engk8s.processmaker.net"
+            export INSTANCE_URL_PREFIX="https://tenant-1.ci-$instance"
           else
-            export INSTANCE_URL="https://ci-$instance.engk8s.processmaker.net"
+            export INSTANCE_URL_PREFIX="https://ci-$instance"
           fi
+          export INSTANCE_URL="${INSTANCE_URL_PREFIX}.engk8s.processmaker.net"
           echo "Instance URL: $INSTANCE_URL"
+          echo "INSTANCE_URL_PREFIX: $INSTANCE_URL_PREFIX"
           {
             echo "instance=$instance"
-            echo "instance_url=$INSTANCE_URL"
+            echo "instance_url_prefix=$INSTANCE_URL_PREFIX"
           } >> "$GITHUB_OUTPUT"
           bash .github/scripts/gh_comment.sh "$CI_PROJECT" "$pull_req_id"
 
@@ -299,7 +301,7 @@ jobs:
         working-directory: testbench
         env:
           SITE_NAME: CI
-          URL: ${{ needs.deployEKS.outputs.instance_url }}
+          URL: ${{ needs.deployEKS.outputs.instance_url_prefix }}.engk8s.processmaker.net
           INSTANCE_PASSWORD: ${{ secrets.CI_INSTANCE_PASSWORD }}
           CONTEXT_PATH: ./context
           TCP_TUNNELS: "mailserver:587 mailserver:993"
