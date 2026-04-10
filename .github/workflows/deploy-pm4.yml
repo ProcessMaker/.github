@@ -33,6 +33,7 @@ env:
   MULTITENANCY: ${{ (contains(github.event.pull_request.body, 'ci:multitenancy')) && 'true' || 'false' }}
   BASE_IMAGE: ${{ secrets.REGISTRY_HOST }}/processmaker/processmaker:base
   CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
+  SKIP_REDEPLOY: ${{ (contains(github.event.pull_request.body, 'ci:skip-redeploy')) && 'true' || 'false' }}
   # K8S_BRANCH: ${{ contains(github.event.pull_request.body, 'ci:next') && 'next' || 'release-2024-fall' }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.delete }}
@@ -169,6 +170,9 @@ jobs:
           instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
           echo "INSTANCE: $instance"
           echo "IMAGE_TAG: $IMAGE_TAG"
+          
+          if [[ "${{ env.SKIP_REDEPLOY }}" != "true" ]]; then
+
           sed -i "s#{{INSTANCE}}#$instance#g" .github/scripts/deploy-instance.sh
           sed -i "s#{{INSTANCE}}#$instance#g" .github/templates/instance.yaml
           sed -i "s#{{INSTANCE}}#$instance#g" .github/templates/db.yaml
@@ -187,6 +191,7 @@ jobs:
           cat .github/templates/db.yaml
           chmod +x .github/scripts/deploy-instance.sh
           bash .github/scripts/deploy-instance.sh
+          fi
           if [ "$MULTITENANCY" = "true" ]; then
             export INSTANCE_URL="https://tenant-1.ci-$instance.engk8s.processmaker.net"
           else
@@ -275,6 +280,39 @@ jobs:
                -H "Accept: application/vnd.github.v3+json" \
                -d "$json_payload" \
                "${URL}"
+
+  runTestbench:
+    name: Run Testbench
+    needs: [deployEKS]
+    if: contains(github.event.pull_request.body, 'ci:run-testbench')
+    runs-on: ${{ vars.RUNNER }}
+    steps:
+      - name: Checkout testbench
+        uses: actions/checkout@v4
+        with:
+          repository: ProcessMaker/testbench
+          path: testbench
+
+      - name: Run testbench
+        working-directory: testbench
+        env:
+          SITE_NAME: CI
+          INSTANCE_PASSWORD: ${{ secrets.CI_INSTANCE_PASSWORD }}
+          CONTEXT_PATH: ./context
+          TCP_TUNNELS: "mailserver:587 mailserver:993"
+        run: |
+          instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
+          echo "INSTANCE: $instance"
+          if [ "${{ env.MULTITENANCY }}" = "true" ]; then
+            export URL="https://tenant-1.ci-$instance.engk8s.processmaker.net"
+          else
+            export URL="https://ci-$instance.engk8s.processmaker.net"
+          fi
+          echo "URL: $URL"
+          export USER_GROUP="$(id -u):$(id -g)"
+          chmod +x ./start.sh
+          ./start.sh
+
   deleteEKS:
     name: Delete Instance
     if: github.event.action == 'closed' || inputs.delete != ''
