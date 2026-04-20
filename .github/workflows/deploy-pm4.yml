@@ -99,7 +99,89 @@ jobs:
           curl -I --header "Authorization: Bearer ${{ secrets.GIT_TOKEN }}" https://api.github.com
           echo ""
           echo "=== Rate limit check complete ==="
-  
+
+  validatePerfMetricsTags:
+    name: validate-performance-metrics-tags
+    if: github.event.action != 'closed' && inputs.delete == '' && contains(github.event.pull_request.body, 'ci:performance-tests')
+    runs-on: ${{ vars.RUNNER }}
+    steps:
+      - name: Checkout .github repo
+        uses: actions/checkout@v4
+        with:
+          repository: processmaker/.github
+          ref: automated-performance-tests
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Checkout automated-performance-metrics
+        uses: actions/checkout@v4
+        with:
+          repository: ProcessMaker/automated-performance-metrics
+          ref: main
+          path: automated-performance-metrics
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Validate ci:performance-tests @perf-labels from PR body
+        env:
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
+        run: |
+          chmod +x .github/scripts/validate-perf-metrics-tags.sh
+          .github/scripts/validate-perf-metrics-tags.sh automated-performance-metrics
+
+  imageEKSBase:
+    name: build-docker-image-EKS-base
+    if: github.event.action != 'closed' && inputs.delete == '' && contains(github.event.pull_request.body, 'ci:performance-tests')
+    needs: validatePerfMetricsTags
+    runs-on: ${{ vars.RUNNER }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: processmaker/.github
+
+      - name: Common
+        uses: ./.github/actions/common
+        with:
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Set base branch and image tag
+        run: |
+          BASE_BRANCH="${{ github.event.pull_request.base.ref || github.event.repository.default_branch || 'develop' }}"
+          BASE_IMAGE_TAG="processmaker-$(echo "${BASE_BRANCH}" | sed 's;/;-;g')"
+          echo "BASE_BRANCH=${BASE_BRANCH}" >> $GITHUB_ENV
+          echo "BASE_IMAGE_TAG=${BASE_IMAGE_TAG}" >> $GITHUB_ENV
+          echo "Base branch: ${BASE_BRANCH} -> image tag: ${BASE_IMAGE_TAG}"
+
+      - name: Generate image EKS (base)
+        if: env.BASE_BRANCH != 'develop' && !contains(github.event.pull_request.body, 'ci:skip-build')
+        run: |
+          cd pm4-k8s-distribution/images
+          export CI_RELEASE_BRANCH=$RELEASE_BRANCH
+          branch="${{ env.BASE_BRANCH }}" tag="${{ env.BASE_IMAGE_TAG }}" bash build.k8s-cicd.sh
+          echo "VERSION=${{ env.BASE_IMAGE_TAG }}" >> $GITHUB_ENV
+
+      - name: List Images
+        if: env.BASE_BRANCH != 'develop' && !contains(github.event.pull_request.body, 'ci:skip-build')
+        run: docker images
+
+      - name: Login to Harbor
+        if: env.BASE_BRANCH != 'develop' && !contains(github.event.pull_request.body, 'ci:skip-build')
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ secrets.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Push Enterprise Image to Harbor (base)
+        if: env.BASE_BRANCH != 'develop' && !contains(github.event.pull_request.body, 'ci:skip-build')
+        run: |
+          docker tag processmaker/enterprise:${{ env.BASE_IMAGE_TAG }} ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${{ env.BASE_IMAGE_TAG }}
+          docker push ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${{ env.BASE_IMAGE_TAG }}
+
+      - name: Base image ready
+        if: env.BASE_BRANCH == 'develop' || contains(github.event.pull_request.body, 'ci:skip-build')
+        run: |
+          echo "Skipped base build (base is develop or ci:skip-build); baseline will use existing image if needed."
+
   deployEKS:
     name: deploy-EKS
     if: contains(github.event.pull_request.body, 'ci:deploy')
@@ -352,6 +434,714 @@ jobs:
           else
             echo "The pull request does not have an instance on K8s [https://ci-$INSTANCE.engk8s.processmaker.net] not found!!"
           fi
+          # Performance test releases (safety net if perf job was cancelled). Perf installs in default namespace.
+          # Release names include 8-char hex suffix: ci-${INSTANCE}-perf-baseline-<hex8>, ci-${INSTANCE}-perf-update-<hex8>
+          for release in $(helm list -n default -q 2>/dev/null | grep -E "^ci-${INSTANCE}-perf-(baseline|update)-[a-f0-9]{8}$" || true); do
+            echo "Uninstalling performance release: $release (default namespace)"
+            helm uninstall "$release" --namespace default 2>/dev/null || true
+            ns="${release}-ns-pm4"
+            if kubectl get namespace "$ns" &>/dev/null; then
+              echo "Deleting performance namespace: $ns"
+              kubectl delete namespace "$ns" --timeout=120s --ignore-not-found=true || true
+            fi
+          done
+
+  perfBaseline:
+    name: perf-baseline
+    if: github.event.action != 'closed' && inputs.delete == '' && contains(github.event.pull_request.body, 'ci:performance-tests')
+    needs: [validatePerfMetricsTags, imageEKS, imageEKSBase]
+    runs-on: ${{ vars.RUNNER }}
+    steps:
+      - name: Checkout .github repo
+        uses: actions/checkout@v4
+        with:
+          repository: processmaker/.github
+          ref: automated-performance-tests
+
+      - name: Common
+        uses: ./.github/actions/common
+        with:
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Checkout automated-performance-metrics
+        uses: actions/checkout@v4
+        with:
+          repository: ProcessMaker/automated-performance-metrics
+          ref: main
+          path: automated-performance-metrics
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Discover k6 tests (validate ci:performance-tests @perf-labels)
+        env:
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
+        run: |
+          chmod +x .github/scripts/validate-perf-metrics-tags.sh
+          .github/scripts/validate-perf-metrics-tags.sh automated-performance-metrics perf-test-scripts.txt
+
+      - name: Install pm4-tools
+        run: |
+          echo "versionHelm=$(grep "version:" "pm4-k8s-distribution/charts/enterprise/Chart.yaml" | awk '{print $2}' | sed 's/\"//g')" >> $GITHUB_ENV
+          cd pm4-k8s-distribution/images/pm4-tools
+          composer install --no-interaction
+          cd ../..
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Set up kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Authenticate with Amazon EKS
+        run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
+
+      - name: Prepare performance test (baseline)
+        id: perf_prep
+        run: |
+          INSTANCE=$(echo -n ${{ env.IMAGE_TAG }} | md5sum | head -c 10)
+          RANDOM_SUFFIX=$(openssl rand -hex 4)
+          echo "instance=${INSTANCE}" >> $GITHUB_OUTPUT
+          echo "INSTANCE=${INSTANCE}" >> $GITHUB_ENV
+          echo "random_suffix=${RANDOM_SUFFIX}" >> $GITHUB_OUTPUT
+          echo "RANDOM_SUFFIX=${RANDOM_SUFFIX}" >> $GITHUB_ENV
+          echo "Instance ID: ${INSTANCE} (hostname suffix: ${RANDOM_SUFFIX})"
+
+      - name: Substitute perf instance template (baseline)
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          BASE_BRANCH="${{ github.event.pull_request.base.ref || github.event.repository.default_branch || 'develop' }}"
+          BASE_IMAGE_TAG="processmaker-$(echo "${BASE_BRANCH}" | sed 's;/;-;g')"
+          PERF_NODE_LABEL="ci-${INSTANCE}-baseline"
+          echo "BASE_BRANCH=${BASE_BRANCH}" >> $GITHUB_ENV
+          echo "BASE_IMAGE_TAG=${BASE_IMAGE_TAG}" >> $GITHUB_ENV
+          sed -i "s#{{INSTANCE}}#${INSTANCE}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{PERF_NODE_LABEL}}#${PERF_NODE_LABEL}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{APP_VERSION}}#${BASE_IMAGE_TAG}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{CUSTOMER_LICENSES_PAT}}#${{ secrets.CUSTOMER_LICENSES_PAT }}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{KEYCLOAK_CLIENT_SECRET}}#${{ secrets.KEYCLOAK_CLIENT_SECRET }}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{KEYCLOAK_PASSWORD}}#${{ secrets.KEYCLOAK_PASSWORD }}#g" .github/templates/instance-perf.yaml
+
+      - name: Create performance node group (baseline)
+        run: |
+          export INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          export PERF_SUFFIX=baseline
+          chmod +x .github/scripts/create-perf-nodegroup.sh
+          .github/scripts/create-perf-nodegroup.sh
+
+      - name: Wait for performance node Ready (baseline)
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          echo "Waiting for node with label performance=ci-${INSTANCE}-baseline to be Ready..."
+          for i in $(seq 1 30); do
+            READY=$(kubectl get nodes -l "performance=ci-${INSTANCE}-baseline" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+            if [ "$READY" = "True" ]; then
+              echo "Node is Ready."
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 20
+          done
+          kubectl get nodes -l "performance=ci-${INSTANCE}-baseline"
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Deploy baseline (base branch) and verify
+        id: baseline
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          HELM_REPO: ${{ secrets.HELM_REPO }}
+          HELM_USERNAME: ${{ secrets.HELM_USERNAME }}
+          HELM_PASSWORD: ${{ secrets.HELM_PASSWORD }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANALYTICS_AWS_ACCESS_KEY: ${{ secrets.ANALYTICS_AWS_ACCESS_KEY }}
+          ANALYTICS_AWS_SECRET_KEY: ${{ secrets.ANALYTICS_AWS_SECRET_KEY }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+          REGISTRY_HOST: ${{ secrets.REGISTRY_HOST }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          TWILIO_SID: ${{ secrets.TWILIO_SID }}
+          TWILIO_TOKEN: ${{ secrets.TWILIO_TOKEN }}
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-baseline-${RANDOM_SUFFIX}"
+          export RELEASE_NAME APP_VERSION="${{ env.BASE_IMAGE_TAG }}" INSTANCE
+          export versionHelm="${{ env.versionHelm }}"
+          chmod +x .github/scripts/deploy-perf-instance.sh
+          .github/scripts/deploy-perf-instance.sh
+          BASE_URL="https://${RELEASE_NAME}.engk8s.processmaker.net"
+          echo "Checking $BASE_URL/login ..."
+          for i in $(seq 1 30); do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" -k "$BASE_URL/login" || echo 000)
+            if [ "$CODE" = "200" ]; then
+              echo "Baseline /login returned 200."
+              break
+            fi
+            echo "Attempt $i: got $CODE"
+            sleep 15
+          done
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" -k "$BASE_URL/login")
+          if [ "$CODE" != "200" ]; then
+            echo "Baseline /login did not return 200 (got $CODE). Continuing to cleanup."
+          fi
+
+      - name: Wait for TLS certificate (baseline)
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-baseline-${RANDOM_SUFFIX}"
+          APP_NS="${RELEASE_NAME}-ns-pm4"
+          CERT_NAME="${RELEASE_NAME}-tls-secret"
+          echo "Waiting for cert-manager to issue TLS certificate for ${RELEASE_NAME}..."
+          READY=""
+          for i in $(seq 1 5); do
+            READY=$(kubectl get certificate -n "$APP_NS" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | tr ' ' '\n' | head -1)
+            if [ "$READY" = "True" ]; then
+              echo "TLS certificate Ready."
+              break
+            fi
+            echo "Waiting for TLS certificate... ($i/5)"
+            sleep 10
+          done
+          if [ "$READY" != "True" ]; then
+            echo "Certificate not ready after 5 loops; deleting to trigger regeneration..."
+            kubectl delete certificate -n "$APP_NS" "$CERT_NAME" --ignore-not-found=true || true
+            sleep 5
+            echo "Waiting up to 5 more loops for renewed certificate..."
+            for i in $(seq 1 5); do
+              READY=$(kubectl get certificate -n "$APP_NS" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | tr ' ' '\n' | head -1)
+              if [ "$READY" = "True" ]; then
+                echo "TLS certificate Ready (after retry)."
+                break
+              fi
+              echo "Waiting for TLS certificate (retry)... ($i/5)"
+              sleep 10
+            done
+          fi
+          if [ "$READY" != "True" ]; then
+            echo "TLS certificate did not become Ready; k6 may see certificate errors."
+          fi
+
+      - name: Generate admin access token (baseline)
+        id: token_baseline
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-baseline-${RANDOM_SUFFIX}"
+          APP_NS="${RELEASE_NAME}-ns-pm4"
+          POD=""
+          attempts=0
+          while [ -z "$POD" ]; do
+            POD=$(kubectl get pods -n "$APP_NS" -l service=web --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+            [ -n "$POD" ] && break
+            attempts=$((attempts + 1))
+            [ $attempts -ge 5 ] && break
+            sleep 10
+          done
+          echo "Using web pod: ${POD:-none}"
+          TOKEN=$(kubectl exec -n "$APP_NS" "$POD" -- sudo -u nginx php /opt/processmaker/artisan processmaker:generate-access-token admin 2>/dev/null | tr -d '\r\n') || true
+          if [ -z "$TOKEN" ]; then
+            echo "Could not generate baseline token"
+            echo "token=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "token=${TOKEN}" >> $GITHUB_OUTPUT
+
+      - name: Run k6 on baseline
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-baseline-${RANDOM_SUFFIX}"
+          APP_URL="https://${RELEASE_NAME}.engk8s.processmaker.net"
+          TOKEN="${{ steps.token_baseline.outputs.token }}"
+          if [ -z "$TOKEN" ]; then
+            echo "Skipping baseline k6: no token"
+            exit 0
+          fi
+          export BASE_PATH="${APP_URL}"
+          export BEARER_TOKEN="${TOKEN}"
+          while IFS= read -r script; do
+            [ -z "$script" ] && continue
+            test_id=$(echo "$script" | sed 's|automated-performance-metrics/scripts/||;s|\.js$||;s|/|-|g')
+            echo "Running baseline k6: $script (id: $test_id)"
+            k6 run "$script" 2>&1 | tee "baseline-${test_id}-k6-results.txt" || true
+          done < perf-test-scripts.txt
+
+      - name: Upload baseline results
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-results
+          path: |
+            perf-test-scripts.txt
+            baseline-*-k6-results.txt
+
+      - name: Cleanup baseline
+        if: always()
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-baseline-${RANDOM_SUFFIX}"
+          APP_NS="${RELEASE_NAME}-ns-pm4"
+          helm uninstall "${RELEASE_NAME}" --namespace default 2>/dev/null || true
+          kubectl delete namespace "${APP_NS}" --timeout=120s --ignore-not-found=true || true
+          # Force-cleanup: remove stuck pods so namespace can terminate and node group delete can complete
+          for pod in $(kubectl get pods -n "${APP_NS}" -o name 2>/dev/null); do
+            kubectl delete "${pod}" -n "${APP_NS}" --grace-period=0 --force 2>/dev/null || true
+          done
+          if kubectl get namespace "${APP_NS}" &>/dev/null; then
+            kubectl get namespace "${APP_NS}" -o json | jq '.metadata.finalizers = []' | kubectl replace --raw "/api/v1/namespaces/${APP_NS}/finalize" -f - 2>/dev/null || true
+          fi
+
+      - name: Delete performance node group (baseline)
+        if: always()
+        run: |
+          export INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          export PERF_SUFFIX=baseline
+          chmod +x .github/scripts/delete-perf-nodegroup.sh
+          .github/scripts/delete-perf-nodegroup.sh
+
+  perfUpdate:
+    name: perf-update
+    if: github.event.action != 'closed' && inputs.delete == '' && contains(github.event.pull_request.body, 'ci:performance-tests')
+    needs: [validatePerfMetricsTags, imageEKS, imageEKSBase]
+    runs-on: ${{ vars.RUNNER }}
+    steps:
+      - name: Checkout .github repo
+        uses: actions/checkout@v4
+        with:
+          repository: processmaker/.github
+          ref: automated-performance-tests
+
+      - name: Common
+        uses: ./.github/actions/common
+        with:
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Checkout automated-performance-metrics
+        uses: actions/checkout@v4
+        with:
+          repository: ProcessMaker/automated-performance-metrics
+          ref: main
+          path: automated-performance-metrics
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Discover k6 tests (validate ci:performance-tests @perf-labels)
+        env:
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
+        run: |
+          chmod +x .github/scripts/validate-perf-metrics-tags.sh
+          .github/scripts/validate-perf-metrics-tags.sh automated-performance-metrics perf-test-scripts.txt
+
+      - name: Install pm4-tools
+        run: |
+          echo "versionHelm=$(grep "version:" "pm4-k8s-distribution/charts/enterprise/Chart.yaml" | awk '{print $2}' | sed 's/\"//g')" >> $GITHUB_ENV
+          cd pm4-k8s-distribution/images/pm4-tools
+          composer install --no-interaction
+          cd ../..
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Set up kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Authenticate with Amazon EKS
+        run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
+
+      - name: Prepare performance test (update)
+        id: perf_prep
+        run: |
+          INSTANCE=$(echo -n ${{ env.IMAGE_TAG }} | md5sum | head -c 10)
+          RANDOM_SUFFIX=$(openssl rand -hex 4)
+          echo "instance=${INSTANCE}" >> $GITHUB_OUTPUT
+          echo "INSTANCE=${INSTANCE}" >> $GITHUB_ENV
+          echo "random_suffix=${RANDOM_SUFFIX}" >> $GITHUB_OUTPUT
+          echo "RANDOM_SUFFIX=${RANDOM_SUFFIX}" >> $GITHUB_ENV
+          echo "Instance ID: ${INSTANCE} (hostname suffix: ${RANDOM_SUFFIX})"
+
+      - name: Substitute perf instance template (update)
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          PERF_NODE_LABEL="ci-${INSTANCE}-update"
+          sed -i "s#{{INSTANCE}}#${INSTANCE}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{PERF_NODE_LABEL}}#${PERF_NODE_LABEL}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{APP_VERSION}}#${{ env.IMAGE_TAG }}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{CUSTOMER_LICENSES_PAT}}#${{ secrets.CUSTOMER_LICENSES_PAT }}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{KEYCLOAK_CLIENT_SECRET}}#${{ secrets.KEYCLOAK_CLIENT_SECRET }}#g" .github/templates/instance-perf.yaml
+          sed -i "s#{{KEYCLOAK_PASSWORD}}#${{ secrets.KEYCLOAK_PASSWORD }}#g" .github/templates/instance-perf.yaml
+
+      - name: Create performance node group (update)
+        run: |
+          export INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          export PERF_SUFFIX=update
+          chmod +x .github/scripts/create-perf-nodegroup.sh
+          .github/scripts/create-perf-nodegroup.sh
+
+      - name: Wait for performance node Ready (update)
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          echo "Waiting for node with label performance=ci-${INSTANCE}-update to be Ready..."
+          for i in $(seq 1 30); do
+            READY=$(kubectl get nodes -l "performance=ci-${INSTANCE}-update" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+            if [ "$READY" = "True" ]; then
+              echo "Node is Ready."
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 20
+          done
+          kubectl get nodes -l "performance=ci-${INSTANCE}-update"
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Deploy update (PR build) and verify
+        id: update
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          HELM_REPO: ${{ secrets.HELM_REPO }}
+          HELM_USERNAME: ${{ secrets.HELM_USERNAME }}
+          HELM_PASSWORD: ${{ secrets.HELM_PASSWORD }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANALYTICS_AWS_ACCESS_KEY: ${{ secrets.ANALYTICS_AWS_ACCESS_KEY }}
+          ANALYTICS_AWS_SECRET_KEY: ${{ secrets.ANALYTICS_AWS_SECRET_KEY }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+          REGISTRY_HOST: ${{ secrets.REGISTRY_HOST }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          TWILIO_SID: ${{ secrets.TWILIO_SID }}
+          TWILIO_TOKEN: ${{ secrets.TWILIO_TOKEN }}
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-update-${RANDOM_SUFFIX}"
+          export RELEASE_NAME APP_VERSION="${{ env.IMAGE_TAG }}" INSTANCE
+          export versionHelm="${{ env.versionHelm }}"
+          chmod +x .github/scripts/deploy-perf-instance.sh
+          .github/scripts/deploy-perf-instance.sh
+          BASE_URL="https://${RELEASE_NAME}.engk8s.processmaker.net"
+          echo "Checking $BASE_URL/login ..."
+          for i in $(seq 1 30); do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" -k "$BASE_URL/login" || echo 000)
+            if [ "$CODE" = "200" ]; then
+              echo "Update /login returned 200."
+              break
+            fi
+            echo "Attempt $i: got $CODE"
+            sleep 15
+          done
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" -k "$BASE_URL/login")
+          if [ "$CODE" != "200" ]; then
+            echo "Update /login did not return 200 (got $CODE). Continuing to cleanup."
+          fi
+
+      - name: Wait for TLS certificate (update)
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-update-${RANDOM_SUFFIX}"
+          APP_NS="${RELEASE_NAME}-ns-pm4"
+          CERT_NAME="${RELEASE_NAME}-tls-secret"
+          echo "Waiting for cert-manager to issue TLS certificate for ${RELEASE_NAME}..."
+          READY=""
+          for i in $(seq 1 5); do
+            READY=$(kubectl get certificate -n "$APP_NS" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | tr ' ' '\n' | head -1)
+            if [ "$READY" = "True" ]; then
+              echo "TLS certificate Ready."
+              break
+            fi
+            echo "Waiting for TLS certificate... ($i/5)"
+            sleep 10
+          done
+          if [ "$READY" != "True" ]; then
+            echo "Certificate not ready after 5 loops; deleting to trigger regeneration..."
+            kubectl delete certificate -n "$APP_NS" "$CERT_NAME" --ignore-not-found=true || true
+            sleep 5
+            echo "Waiting up to 5 more loops for renewed certificate..."
+            for i in $(seq 1 5); do
+              READY=$(kubectl get certificate -n "$APP_NS" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | tr ' ' '\n' | head -1)
+              if [ "$READY" = "True" ]; then
+                echo "TLS certificate Ready (after retry)."
+                break
+              fi
+              echo "Waiting for TLS certificate (retry)... ($i/5)"
+              sleep 10
+            done
+          fi
+          if [ "$READY" != "True" ]; then
+            echo "TLS certificate did not become Ready; k6 may see certificate errors."
+          fi
+
+      - name: Generate admin access token (update instance)
+        id: token
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-update-${RANDOM_SUFFIX}"
+          APP_NS="${RELEASE_NAME}-ns-pm4"
+          POD=""
+          attempts=0
+          while [ -z "$POD" ]; do
+            POD=$(kubectl get pods -n "$APP_NS" -l service=web --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+            [ -n "$POD" ] && break
+            attempts=$((attempts + 1))
+            [ $attempts -ge 5 ] && break
+            sleep 10
+          done
+          echo "Using web pod: ${POD:-none}"
+          TOKEN=$(kubectl exec -n "$APP_NS" "$POD" -- sudo -u nginx php /opt/processmaker/artisan processmaker:generate-access-token admin 2>/dev/null | tr -d '\r\n') || true
+          if [ -z "$TOKEN" ]; then
+            echo "Could not generate token (pod may still be starting)"
+            echo "token=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "token=${TOKEN}" >> $GITHUB_OUTPUT
+
+      - name: Run k6 on update
+        id: k6_update
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-update-${RANDOM_SUFFIX}"
+          APP_URL="https://${RELEASE_NAME}.engk8s.processmaker.net"
+          TOKEN="${{ steps.token.outputs.token }}"
+          if [ -z "$TOKEN" ]; then
+            echo "Skipping update k6: no token"
+            exit 0
+          fi
+          export BASE_PATH="${APP_URL}"
+          export BEARER_TOKEN="${TOKEN}"
+          while IFS= read -r script; do
+            [ -z "$script" ] && continue
+            test_id=$(echo "$script" | sed 's|automated-performance-metrics/scripts/||;s|\.js$||;s|/|-|g')
+            echo "Running update k6: $script (id: $test_id)"
+            k6 run "$script" 2>&1 | tee "update-${test_id}-k6-results.txt" || true
+          done < perf-test-scripts.txt
+
+      - name: Upload update results
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-results
+          path: |
+            perf-test-scripts.txt
+            update-*-k6-results.txt
+
+      - name: Cleanup update
+        if: always()
+        run: |
+          INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          RANDOM_SUFFIX="${{ env.RANDOM_SUFFIX }}"
+          RELEASE_NAME="ci-${INSTANCE}-perf-update-${RANDOM_SUFFIX}"
+          APP_NS="${RELEASE_NAME}-ns-pm4"
+          helm uninstall "${RELEASE_NAME}" --namespace default 2>/dev/null || true
+          kubectl delete namespace "${APP_NS}" --timeout=120s --ignore-not-found=true || true
+          # Force-cleanup: remove stuck pods so namespace can terminate and node group delete can complete
+          for pod in $(kubectl get pods -n "${APP_NS}" -o name 2>/dev/null); do
+            kubectl delete "${pod}" -n "${APP_NS}" --grace-period=0 --force 2>/dev/null || true
+          done
+          if kubectl get namespace "${APP_NS}" &>/dev/null; then
+            kubectl get namespace "${APP_NS}" -o json | jq '.metadata.finalizers = []' | kubectl replace --raw "/api/v1/namespaces/${APP_NS}/finalize" -f - 2>/dev/null || true
+          fi
+
+      - name: Delete performance node group (update)
+        if: always()
+        run: |
+          export INSTANCE="${{ steps.perf_prep.outputs.instance }}"
+          export PERF_SUFFIX=update
+          chmod +x .github/scripts/delete-perf-nodegroup.sh
+          .github/scripts/delete-perf-nodegroup.sh
+
+  perfComment:
+    name: perf-comment
+    if: github.event.action != 'closed' && inputs.delete == '' && contains(github.event.pull_request.body, 'ci:performance-tests')
+    needs: [perfBaseline, perfUpdate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: write
+    steps:
+      - name: Download baseline results
+        uses: actions/download-artifact@v4
+        with:
+          name: baseline-results
+
+      - name: Download update results
+        uses: actions/download-artifact@v4
+        with:
+          name: update-results
+
+      - name: Prepare performance comment body and bundle raw data
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir -p perf-data/baseline perf-data/update
+          cp baseline-results/* perf-data/baseline/ 2>/dev/null || true
+          cp update-results/* perf-data/update/ 2>/dev/null || true
+
+          cp baseline-results/baseline-*-k6-results.txt . 2>/dev/null || true
+          cp update-results/update-*-k6-results.txt . 2>/dev/null || true
+          (ls -1 baseline-*-k6-results.txt 2>/dev/null | sed 's/^baseline-//;s/-k6-results\.txt$//'; \
+           ls -1 update-*-k6-results.txt 2>/dev/null | sed 's/^update-//;s/-k6-results\.txt$//') | sort -u > perf-test-ids.txt
+
+          get_metric() { grep -E "^\s+$1\.+" "$2" 2>/dev/null | head -1 | awk '{ for(i=2;i<=NF;i++) printf "%s%s", $i, (i<NF?" ":""); print "" }' | xargs; }
+          get_iterations_count() { grep -E "^\s+iterations\.+" "$1" 2>/dev/null | head -1 | awk '{print $2}'; }
+          get_http_duration_avg() { grep -E "^\s+http_req_duration" "$1" 2>/dev/null | head -1 | sed -n 's/.*avg=\([0-9.]*\)ms.*/\1/p'; }
+          get_http_failed_pct() { grep -E "^\s+http_req_failed" "$1" 2>/dev/null | head -1 | sed -n 's/.*: \([0-9.]*\)%.*/\1/p'; }
+          get_k6_wall_label() { grep -oE 'running \([^)]+\)' "$1" 2>/dev/null | tail -1 | sed 's/^running (//;s/)$//' || true; }
+
+          wall_to_sec() {
+            t="$1"
+            [ -z "$t" ] && echo "" && return
+            if echo "$t" | grep -qE '[0-9]+m'; then
+              echo "$t" | awk -F'm' '{gsub(/s/,"",$2); if ($2=="") $2=0; print $1*60+$2}'
+            else
+              echo "$t" | sed 's/s$//' | awk '{print $1+0}'
+            fi
+          }
+
+          fmt_sec() {
+            s="$1"
+            if [ -z "$s" ] || ! awk -v s="$s" 'BEGIN{exit !(s>0)}' 2>/dev/null; then echo "—"; return; fi
+            awk -v s="$s" 'BEGIN{
+              m=int(s/60); r=s-m*60;
+              if (m>0) printf "%dm%.1fs", m, r+0; else printf "%.1fs", s+0
+            }'
+          }
+
+          pct_diff_ratio() {
+            b="$1" u="$2"
+            awk -v b="$b" -v u="$u" 'BEGIN{
+              if (b=="" || u=="") { print "—"; exit }
+              if (b !~ /^[0-9]+(\.[0-9]+)?$/ || u !~ /^[0-9]+(\.[0-9]+)?$/) { print "—"; exit }
+              if (b+0 <= 0) { print "—"; exit }
+              printf "%+.1f%%", ((u-b)/b)*100
+            }'
+          }
+
+          pct_diff_fail() {
+            b="$1" u="$2"
+            awk -v b="$b" -v u="$u" 'BEGIN{
+              if (b=="" || u=="") { print "—"; exit }
+              if (b !~ /^[0-9]+(\.[0-9]+)?$/ || u !~ /^[0-9]+(\.[0-9]+)?$/) { print "—"; exit }
+              if (b+0==0 && u+0==0) { print "0.0%"; exit }
+              if (b+0==0) { print "—"; exit }
+              printf "%+.1f%%", ((u-b)/b)*100
+            }'
+          }
+
+          sum_base=0
+          sum_upd=0
+
+          {
+            echo "| Test | Metric | Baseline | Update | Δ % | Total test time |"
+            echo "|------|--------|----------|--------|-----|-----------------|"
+          } > perf-comment.md
+
+          if [ ! -s perf-test-ids.txt ]; then
+            echo "| — | (no k6 result files) | — | — | — | — |" >> perf-comment.md
+          else
+            while IFS= read -r test_id; do
+              [ -z "$test_id" ] && continue
+              BASE_FILE="baseline-${test_id}-k6-results.txt"
+              UPD_FILE="update-${test_id}-k6-results.txt"
+
+              base_iter="$(get_metric 'iterations' "$BASE_FILE" 2>/dev/null || true)"; [ -z "${base_iter:-}" ] && base_iter="—"
+              upd_iter="$(get_metric 'iterations' "$UPD_FILE" 2>/dev/null || true)"; [ -z "${upd_iter:-}" ] && upd_iter="—"
+              base_iter_n="$(get_iterations_count "$BASE_FILE" 2>/dev/null || true)"
+              upd_iter_n="$(get_iterations_count "$UPD_FILE" 2>/dev/null || true)"
+
+              base_dur="$(get_http_duration_avg "$BASE_FILE" 2>/dev/null || true)"; [ -z "${base_dur:-}" ] && base_dur="—"
+              upd_dur="$(get_http_duration_avg "$UPD_FILE" 2>/dev/null || true)"; [ -z "${upd_dur:-}" ] && upd_dur="—"
+
+              base_fail="$(get_http_failed_pct "$BASE_FILE" 2>/dev/null || true)"; [ -z "${base_fail:-}" ] && base_fail="—"
+              upd_fail="$(get_http_failed_pct "$UPD_FILE" 2>/dev/null || true)"; [ -z "${upd_fail:-}" ] && upd_fail="—"
+
+              pd_iter="$(pct_diff_ratio "$base_iter_n" "$upd_iter_n")"
+              pd_dur="$(pct_diff_ratio "$base_dur" "$upd_dur")"
+              pd_fail="$(pct_diff_fail "$base_fail" "$upd_fail")"
+
+              wall_b="$(get_k6_wall_label "$BASE_FILE")"
+              wall_u="$(get_k6_wall_label "$UPD_FILE")"
+              sec_b="$(wall_to_sec "$wall_b")"
+              sec_u="$(wall_to_sec "$wall_u")"
+              [ -n "$sec_b" ] && sum_base="$(awk -v a="$sum_base" -v b="$sec_b" 'BEGIN{print a+b}')"
+              [ -n "$sec_u" ] && sum_upd="$(awk -v a="$sum_upd" -v b="$sec_u" 'BEGIN{print a+b}')"
+              wall_display_b="${wall_b:-—}"
+              wall_display_u="${wall_u:-—}"
+              if [ -n "$sec_b" ] && [ -n "$sec_u" ]; then
+                pd_wall="$(pct_diff_ratio "$sec_b" "$sec_u")"
+                total_bu="$(awk -v b="$sec_b" -v u="$sec_u" 'BEGIN{print b+u}')"
+                total_fmt="$(fmt_sec "$total_bu")"
+              else
+                pd_wall="—"
+                total_fmt="—"
+              fi
+
+              echo "| \`${test_id}\` | iterations | \`${base_iter}\` | \`${upd_iter}\` | \`${pd_iter}\` | — |" >> perf-comment.md
+              echo "| \`${test_id}\` | http_req_duration (avg ms) | \`${base_dur}\` | \`${upd_dur}\` | \`${pd_dur}\` | — |" >> perf-comment.md
+              echo "| \`${test_id}\` | http_req_failed (%) | \`${base_fail}\` | \`${upd_fail}\` | \`${pd_fail}\` | — |" >> perf-comment.md
+              echo "| \`${test_id}\` | k6 wall time | \`${wall_display_b}\` | \`${wall_display_u}\` | \`${pd_wall}\` | \`${total_fmt}\` |" >> perf-comment.md
+            done < perf-test-ids.txt
+
+            total_suite="$(awk -v b="$sum_base" -v u="$sum_upd" 'BEGIN{print b+u}')"
+            pd_suite="$(pct_diff_ratio "$sum_base" "$sum_upd")"
+            fmt_b="$(fmt_sec "$sum_base")"
+            fmt_u="$(fmt_sec "$sum_upd")"
+            fmt_all="$(fmt_sec "$total_suite")"
+            echo "| **All tests** | **sum of k6 wall times** | \`${fmt_b}\` | \`${fmt_u}\` | \`${pd_suite}\` | \`${fmt_all}\` |" >> perf-comment.md
+          fi
+
+          {
+            echo ''
+            echo "Raw k6 logs and scripts: [workflow run artifacts](${RUN_URL}) (includes \`baseline-results\`, \`update-results\`, and \`performance-k6-bundle\`)."
+          } >> perf-comment.md
+
+      - name: Upload consolidated performance bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-k6-bundle
+          path: perf-data
+          if-no-files-found: warn
+
+      - name: Comment PR (performance results)
+        if: success() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            const body = fs.existsSync('perf-comment.md')
+              ? fs.readFileSync('perf-comment.md', 'utf8')
+              : `| Test | Metric | Baseline | Update | Δ % | Total test time |\n|------|--------|----------|--------|-----|-----------------|\n| — | (k6 results not captured) | — | — | — | — |\n\nRaw output: [workflow run artifacts](${runUrl})`;
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
 
   runPhpUnit:
     name: run-phpunit
