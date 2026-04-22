@@ -35,7 +35,7 @@ env:
   CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
   SKIP_REDEPLOY: ${{ (contains(github.event.pull_request.body, 'ci:skip-redeploy')) && 'true' || 'false' }}
   # K8S_BRANCH: ${{ contains(github.event.pull_request.body, 'ci:next') && 'next' || 'release-2024-fall' }}
-  PMAI_HOST: ${{ contains(github.event.pull_request.body, 'ci:pmai_dev') && 'pmai-dev-svc.pmai-system-dev.svc.cluster.local' || 'pmai-svc.pmai-system.svc.cluster.local' }}
+  PMAI_HOST: ${{ contains(github.event.pull_request.body, 'ci:pmai_dev') && 'pmai-svc.pmai-system-dev.svc.cluster.local' || 'pmai-svc.pmai-system.svc.cluster.local' }}
   PMAI_HOST_WS: ${{ contains(github.event.pull_request.body, 'ci:pmai_dev') && 'pmai-dev-ws.engk8s.processmaker.net' || 'pmai-ws.engk8s.processmaker.net' }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.delete }}
