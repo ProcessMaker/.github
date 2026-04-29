@@ -70,18 +70,6 @@ jobs:
       - name: List Images
         run: |
           docker images
-      # - name: Run Trivy vulnerability scanner
-      #   uses: aquasecurity/trivy-action@master
-      #   with:
-      #     image-ref: processmaker/enterprise:${{ env.VERSION }}
-      #     format: 'table'
-      #     exit-code: '0'
-      #     ignore-unfixed: false
-      #     vuln-type: 'os,library'
-      #     scanners: 'vuln,secret'
-      #     severity: 'MEDIUM,HIGH,CRITICAL'
-      #   env:
-      #     TRIVY_TIMEOUT: 30m
       - name: Login to Harbor
         uses: docker/login-action@v2
         with:
@@ -429,3 +417,29 @@ jobs:
             -Dsonar.tests=.
             -Dsonar.test.inclusions=**/*Test.php
             -Dsonar.php.coverage.reportPaths=./pm4-k8s-distribution/images/pm4-tools/coverage.xml
+
+  trivyScan:
+    name: Trivy vulnerability scan
+    # if: github.event.action != 'closed' && inputs.delete == '' && !contains(github.event.pull_request.body, 'ci:skip-build')
+    needs: imageEKS
+    runs-on: ${{ vars.RUNNER }}
+    steps:
+      - name: Login to Harbor
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ secrets.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${{ env.IMAGE_TAG }}
+          format: table
+          exit-code: '0'
+          ignore-unfixed: false
+          vuln-type: os,library
+          scanners: vuln,secret
+          severity: MEDIUM,HIGH,CRITICAL
+        env:
+          TRIVY_TIMEOUT: 30m
