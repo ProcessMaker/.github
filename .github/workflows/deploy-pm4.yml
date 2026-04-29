@@ -438,7 +438,7 @@ jobs:
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${{ env.RESOLVED_IMAGE_TAG }}
-          format: table
+          format: json
           exit-code: '0'
           ignore-unfixed: false
           vuln-type: os,library
