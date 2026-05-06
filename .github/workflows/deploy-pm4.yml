@@ -64,9 +64,9 @@ jobs:
       - name: Checkout shared workflows (composite action)
         uses: actions/checkout@v4
         with:
-          repository: processmaker/.github
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: _pm4_github
-          ref: ${{ github.workflow_sha }}
 
       - name: Set up Node
         uses: actions/setup-node@v4
