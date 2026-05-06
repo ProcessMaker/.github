@@ -29,6 +29,8 @@ env:
   GH_EMAIL: ${{ secrets.GH_EMAIL }}
   DOM_EKS: ${{ secrets.DOM_EKS }}
   GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+  # Git fetch/push for npm + sync-base job: point at another secret (e.g. GITHUB_TOKEN) when migrating off GIT_TOKEN.
+  PM4_SYNC_GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
   BUILD_BASE: ${{ (contains(github.event.pull_request.body, 'ci:build-base') || github.event_name == 'schedule') && '1' || '0' }}
   MULTITENANCY: ${{ (contains(github.event.pull_request.body, 'ci:multitenancy')) && 'true' || 'false' }}
   BASE_IMAGE: ${{ secrets.REGISTRY_HOST }}/processmaker/processmaker:base
@@ -41,6 +43,57 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.delete }}
   cancel-in-progress: true
 jobs:
+  npmInstallAndSyncBase:
+    name: npm install and sync PR with base
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && inputs.delete == ''
+    runs-on: ${{ vars.RUNNER }}
+    defaults:
+      run:
+        working-directory: repo
+    steps:
+      - name: Checkout package
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          path: repo
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          token: ${{ env.PM4_SYNC_GIT_TOKEN }}
+          persist-credentials: true
+
+      - name: Checkout shared workflows (composite action)
+        uses: actions/checkout@v4
+        with:
+          repository: processmaker/.github
+          path: _pm4_github
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: npm install (when package.json exists)
+        run: |
+          set -euo pipefail
+          if [[ ! -f package.json ]]; then
+            echo "No package.json; skipping npm steps."
+            exit 0
+          fi
+          npm install
+          if node -e "const p=require('./package.json'); process.exit(p.scripts&&p.scripts.prod?0:1)"; then
+            npm run prod
+          else
+            echo "No prod script in package.json; skipping npm run prod."
+          fi
+
+      - name: Merge base when behind (optional public/ auto-resolve)
+        uses: ./_pm4_github/.github/actions/common
+        with:
+          token: ${{ env.PM4_SYNC_GIT_TOKEN }}
+          run_k8s_setup: 'false'
+          run_sync_merge_base: 'true'
+          package_path: repo
+
   imageEKS:
     name: build-docker-image-EKS
     if: github.event.action != 'closed' && inputs.delete == ''

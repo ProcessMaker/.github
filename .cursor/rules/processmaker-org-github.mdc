@@ -1,0 +1,32 @@
+---
+description: ProcessMaker/.github org-wide reusable workflows — repo purpose and CI patterns
+alwaysApply: true
+---
+
+# ProcessMaker `.github` (org-wide)
+
+This repository is [ProcessMaker/.github](https://github.com/ProcessMaker/.github): **shared GitHub Actions workflows, scripts, and composite actions** for the ProcessMaker GitHub org. Consumer repositories do not copy this logic; they **call** a reusable workflow via `uses: <org>/<repo>/.github/workflows/<file>.yml@<branch>` and `secrets: inherit` (pin is often `develop` or `main`). The org may still point `uses:` at the core app repo or at this repo depending on workflow—**follow the actual `uses:` in caller repos** when tracing behavior.
+
+## Repo “shape” the AI must keep in mind
+
+- **ProcessMaker core** (e.g. main application repo) and **other repos** (enterprise add-ons, `package-*`, customer/custom packages) **all wire the same reusable workflow entrypoint**. Locally you are often editing the **shared** workflow that runs in **many different repository contexts**.
+- When changing jobs or steps, assume the caller may be **core**, **enterprise**, or **custom/package** unless you have verified otherwise.
+
+## Critical pattern: gate behavior with `if:`
+
+**Every consumer repo is configured to run the shared workflow** (same pattern, different workflow `name`, sometimes different `@ref` — commonly `develop` or `main`; the org tries to keep those aligned to avoid mass updates).
+
+Therefore:
+
+- Anything that should **only** run for certain repos (core vs package vs enterprise-only, etc.) **must** be guarded with job-level or step-level **`if:`** (or equivalent conditions), not by hoping only the “right” repos call the workflow.
+- Prefer explicit conditions on **`github.repository`**, **`github.event.pull_request.head.repo.name`**, **`github.event.repository.name`**, or env vars your workflow already sets (e.g. `CI_PROJECT` / naming conventions) rather than implicit assumptions.
+
+## Consumer example
+
+Package repos typically have a thin wrapper workflow whose only real differences are **display name** and **pin branch**; see e.g. [package-webentry `deploy-package.yml`](https://github.com/ProcessMaker/package-webentry/blob/develop/.github/workflows/deploy-package.yml) (`uses: .../deploy-pm4.yml@develop`, `secrets: inherit`).
+
+When adding or tightening `if:` conditions, **think through all caller repo types** so shared CI stays green across the org.
+
+PHP packages have a composer.json and javascript packages have a package.json. Some have both.
+
+Processmaker core is the main consumer of all these packages. Its located at https://github.com/ProcessMaker/processmaker
