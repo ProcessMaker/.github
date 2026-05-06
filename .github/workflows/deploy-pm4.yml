@@ -66,6 +66,7 @@ jobs:
         with:
           repository: processmaker/.github
           path: _pm4_github
+          ref: ${{ github.workflow_sha }}
 
       - name: Set up Node
         uses: actions/setup-node@v4
