@@ -475,7 +475,7 @@ jobs:
 
   trivyScan:
     name: Trivy vulnerability scan
-    # if: github.event.action != 'closed' && inputs.delete == '' && !contains(github.event.pull_request.body, 'ci:skip-build')
+    if: github.event.action != 'closed' && inputs.delete == ''
     needs: imageEKS
     runs-on: ${{ vars.RUNNER }}
     steps:
