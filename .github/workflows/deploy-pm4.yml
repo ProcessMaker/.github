@@ -69,24 +69,47 @@ jobs:
           path: _pm4_github
           token: ${{ env.PM4_SYNC_GIT_TOKEN }}
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      - name: Runner and Docker diagnostics
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          echo '::group::Runner identity'
+          echo "RUNNER_NAME=${RUNNER_NAME:-}"
+          echo "RUNNER_OS=${RUNNER_OS:-}"
+          echo "RUNNER_ARCH=${RUNNER_ARCH:-}"
+          echo "RUNNER_ENVIRONMENT=${RUNNER_ENVIRONMENT:-}"
+          echo "GITHUB_REPOSITORY=${GITHUB_REPOSITORY}"
+          uname -a || true
+          echo '::endgroup::'
+          echo '::group::CPU / memory / disk'
+          if command -v nproc >/dev/null 2>&1; then echo "nproc=$(nproc)"; fi
+          if command -v sysctl >/dev/null 2>&1; then echo "hw.ncpu=$(sysctl -n hw.ncpu 2>/dev/null || true)"; fi
+          if command -v free >/dev/null 2>&1; then free -h; else echo "(free not available; non-Linux runner?)"; fi
+          df -h "${GITHUB_WORKSPACE}" 2>/dev/null || df -h . || true
+          echo '::endgroup::'
+          echo '::group::Docker'
+          docker version
+          docker info 2>/dev/null | head -n 120 || true
+          echo '::endgroup::'
 
-      - name: npm install (when package.json exists)
+      - name: npm install + prod (Docker)
+        env:
+          DOCKER_BUILDKIT: 1
+          BUILDKIT_PROGRESS: plain
         run: |
           set -euo pipefail
           if [[ ! -f package.json ]]; then
             echo "No package.json; skipping npm steps."
             exit 0
           fi
-          npm install
-          if node -e "const p=require('./package.json'); process.exit(p.scripts&&p.scripts.prod?0:1)"; then
-            npm run prod
-          else
-            echo "No prod script in package.json; skipping npm run prod."
-          fi
+          echo "=== Build start $(date -uIs) (UTC) ==="
+          if command -v free >/dev/null 2>&1; then free -h || true; fi
+          docker build \
+            --progress=plain \
+            --target npm-run-prod-context \
+            -f "${GITHUB_WORKSPACE}/_pm4_github/.github/actions/common/Dockerfile.npm-run-prod" \
+            .
+          echo "=== Build end $(date -uIs) (UTC) ==="
 
       - name: Merge base when behind (optional public/ auto-resolve)
         uses: ./_pm4_github/.github/actions/common

@@ -1,0 +1,61 @@
+# npm install + `npm run prod` in a container (avoids Mix/webpack stalling with no output on some runners).
+#
+# Local stand-in for ProcessMaker core (clone develop): build from this repo root — context can be anything;
+#   docker build -f .github/actions/common/Dockerfile.npm-run-prod .
+# Another branch:
+#   docker build -f .github/actions/common/Dockerfile.npm-run-prod --build-arg PM4_BRANCH=my-branch .
+#
+# GitHub Actions (package / PR checkout): context is the package repo; use target `npm-run-prod-context`:
+#   docker build --target npm-run-prod-context -f path/to/Dockerfile.npm-run-prod .
+#
+# If `npm run prod` dies with exit 137 (Killed): increase Docker memory or pass:
+#   --build-arg NODE_MAX_OLD_SPACE_SIZE=4096
+
+FROM ubuntu:24.04 AS base
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    gnupg \
+    git \
+    python3 \
+    make \
+    g++ \
+    bzip2 \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+  && apt-get install -y --no-install-recommends nodejs \
+  && rm -rf /var/lib/apt/lists/*
+
+# --- PR package checkout (deploy-pm4.yml `npmInstallAndSyncBase`) ---
+FROM base AS sources-context
+WORKDIR /repo
+COPY . .
+
+FROM sources-context AS npm-run-prod-context
+ARG NODE_MAX_OLD_SPACE_SIZE
+RUN if [ -n "${NODE_MAX_OLD_SPACE_SIZE}" ]; then export NODE_OPTIONS="--max-old-space-size=${NODE_MAX_OLD_SPACE_SIZE}"; fi \
+  && npm install
+RUN if [ -n "${NODE_MAX_OLD_SPACE_SIZE}" ]; then export NODE_OPTIONS="--max-old-space-size=${NODE_MAX_OLD_SPACE_SIZE}"; fi \
+  && if node -e "const p=require('./package.json'); process.exit(p.scripts&&p.scripts.prod?0:1)"; then \
+      npm run prod; \
+    else \
+      echo "No prod script in package.json; skipping npm run prod."; \
+    fi
+
+# --- Clone ProcessMaker core (local / scanners) — default `docker build` target ---
+FROM base AS sources-clone
+ARG PM4_BRANCH=develop
+ARG PM4_REPO=https://github.com/ProcessMaker/processmaker.git
+WORKDIR /repo
+RUN git clone --depth 1 --branch "${PM4_BRANCH}" --single-branch "${PM4_REPO}" .
+
+FROM sources-clone AS npm-run-prod
+ARG NODE_MAX_OLD_SPACE_SIZE
+RUN if [ -n "${NODE_MAX_OLD_SPACE_SIZE}" ]; then export NODE_OPTIONS="--max-old-space-size=${NODE_MAX_OLD_SPACE_SIZE}"; fi \
+  && npm install
+RUN if [ -n "${NODE_MAX_OLD_SPACE_SIZE}" ]; then export NODE_OPTIONS="--max-old-space-size=${NODE_MAX_OLD_SPACE_SIZE}"; fi \
+  && npm run prod
