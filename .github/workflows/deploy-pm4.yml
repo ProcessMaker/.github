@@ -83,7 +83,7 @@ jobs:
           fi
           npm install
           if node -e "const p=require('./package.json'); process.exit(p.scripts&&p.scripts.prod?0:1)"; then
-            NODE_OPTIONS=--max-old-space-size=8000 npm run prod
+            npm run prod
           else
             echo "No prod script in package.json; skipping npm run prod."
           fi
