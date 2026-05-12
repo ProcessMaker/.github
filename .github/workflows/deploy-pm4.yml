@@ -67,6 +67,7 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: _pm4_github
+          token: ${{ env.PM4_SYNC_GIT_TOKEN }}
 
       - name: Set up Node
         uses: actions/setup-node@v4
