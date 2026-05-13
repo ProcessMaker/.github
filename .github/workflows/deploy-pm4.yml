@@ -84,7 +84,7 @@ jobs:
           free -h
           df -h
           docker build --progress=plain \
-            --memory=8g \
+            --memory=12g \
             --cpu-shares=512 \
             --build-arg PM4_BRANCH=${{ env.CI_PACKAGE_BRANCH }} \
             -f "${GITHUB_WORKSPACE}/_pm4_github/.github/actions/common/Dockerfile.npm-run-prod" \
