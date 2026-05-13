@@ -83,7 +83,7 @@ jobs:
             --memory=8g \
             --cpu-shares=512 \
             --build-arg PM4_BRANCH=${{ env.CI_PACKAGE_BRANCH }} \
-            -f ./_pm4_github/.github/actions/common/Dockerfile.npm-run-prod \
+            -f "${GITHUB_WORKSPACE}/_pm4_github/.github/actions/common/Dockerfile.npm-run-prod" \
             .
 
       - name: Merge base when behind (optional public/ auto-resolve)
