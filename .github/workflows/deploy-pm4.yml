@@ -78,8 +78,12 @@ jobs:
             echo "No package.json; skipping npm steps."
             exit 0
           fi
-          
-          docker build \
+          set -euxo pipefail
+          docker version
+          docker info
+          free -h
+          df -h
+          docker build --progress=plain \
             --memory=8g \
             --cpu-shares=512 \
             --build-arg PM4_BRANCH=${{ env.CI_PACKAGE_BRANCH }} \
