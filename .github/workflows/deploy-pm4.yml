@@ -49,8 +49,18 @@ jobs:
     runs-on: ${{ vars.RUNNER }}
     defaults:
       run:
-        working-directory: npm-run-prod
+        working-directory: repo
     steps:
+      - name: Checkout package
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          path: repo
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          token: ${{ env.PM4_SYNC_GIT_TOKEN }}
+          persist-credentials: true
+
       - name: Checkout shared workflows (composite action)
         uses: actions/checkout@v4
         with:
@@ -75,6 +85,14 @@ jobs:
             --build-arg PM4_BRANCH=${{ env.CI_PACKAGE_BRANCH }} \
             -f ./_pm4_github/.github/actions/common/Dockerfile.npm-run-prod \
             .
+
+      - name: Merge base when behind (optional public/ auto-resolve)
+        uses: ./_pm4_github/.github/actions/common
+        with:
+          token: ${{ env.PM4_SYNC_GIT_TOKEN }}
+          run_k8s_setup: 'false'
+          run_sync_merge_base: 'true'
+          package_path: repo
 
   imageEKS:
     name: build-docker-image-EKS
