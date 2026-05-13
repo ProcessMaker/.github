@@ -69,7 +69,12 @@ jobs:
             exit 0
           fi
           
-          docker build -f ./_pm4_github/.github/actions/common/Dockerfile.npm-run-prod --build-arg PM4_BRANCH=${{ env.CI_PACKAGE_BRANCH }} .
+          docker build \
+            --memory=8g \
+            --cpu-shares=512 \
+            --build-arg PM4_BRANCH=${{ env.CI_PACKAGE_BRANCH }} \
+            -f ./_pm4_github/.github/actions/common/Dockerfile.npm-run-prod \
+            .
 
   imageEKS:
     name: build-docker-image-EKS

@@ -6,4 +6,4 @@ WORKDIR /repo
 RUN apk add git
 RUN git clone --depth 1 --branch "${PM4_BRANCH}" --single-branch "${PM4_REPO}" .
 RUN npm install
-RUN npm run prod
+RUN NODE_OPTIONS="--max-old-space-size-percentage=75" npm run prod
