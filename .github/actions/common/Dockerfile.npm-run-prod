@@ -1,9 +1,11 @@
 FROM node:24-alpine
 ARG PM4_BRANCH=develop
 ARG PM4_REPO=https://github.com/ProcessMaker/processmaker.git
+RUN apk add git
+
 WORKDIR /repo
 
-RUN apk add git
 RUN git clone --depth 1 --branch "${PM4_BRANCH}" --single-branch "${PM4_REPO}" .
+RUN npx update-browserslist-db@latest
 RUN npm install
-RUN NODE_OPTIONS="--max-old-space-size=4000" npm run prod
+RUN NODE_OPTIONS="--max-old-space-size=6000" npm run prod --verbose
