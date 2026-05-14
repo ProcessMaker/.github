@@ -8,4 +8,14 @@ WORKDIR /repo
 RUN git clone --depth 1 --branch "${PM4_BRANCH}" --single-branch "${PM4_REPO}" .
 RUN npx update-browserslist-db@latest
 RUN npm install
-RUN NODE_OPTIONS="--max-old-space-size=6000" npm run prod --verbose
+# RUN NODE_OPTIONS="--max-old-space-size=6000" npm run prod --verbose
+
+RUN NODE_OPTIONS="--max-old-space-size=6000" npm run prod --verbose & \
+    BUILD_PID=$!; \
+    sleep 30; \
+    echo "=== Memory after 30s ===" && free -h && ps aux | grep -i node; \
+    sleep 60; \
+    echo "=== Memory after 90s ===" && free -h && ps aux | grep -i node; \
+    sleep 120; \
+    echo "=== Memory after 210s ===" && free -h && ps aux | grep -i node; \
+    wait $BUILD_PID
