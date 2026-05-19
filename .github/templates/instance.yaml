@@ -63,6 +63,12 @@ microservices:
     keycloakBaseUrl: https://sso-microsvr-us-east-1.processmaker.net/realms/master/protocol/openid-connect/token
     keycloakUsername: pminstance-us-east-1
     keycloakPassword: {{KEYCLOAK_PASSWORD}}
+    pusherAppId: 1000
+    pusherAppKey: app-key
+    pusherAppSecret: app-secret
+    pusherHost: script-microsvr-ws-us-east-1.processmaker.net
+    pusherPort: 443
+    pusherScheme: 'https'
 twilio:
   enable: true
   phoneNumber: "+17243958155"
