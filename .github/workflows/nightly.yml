@@ -15,27 +15,36 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
 
-      - name: Download Trivy HTML template
-        run: |
-          mkdir -p .github/trivy
-          curl -fsSL -o .github/trivy/html.tpl \
-            https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl
-
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
-          format: template
-          template: "@${{ github.workspace }}/.github/trivy/html.tpl"
-          output: trivy-results.html
+          format: json
+          output: trivy-results.json
           exit-code: '0'
           vuln-type: os,library
           scanners: vuln
 
-      - name: Upload Trivy scan results
+      - name: Convert Trivy JSON to HTML
+        run: |
+          # 1. Download the official HTML template from the Aqua Security repository
+          wget https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl
+          
+          # 2. Use the local Trivy CLI binary installed by trivy-action to convert the report
+          trivy convert --format template --template "@html.tpl" -o trivy-report.html trivy-results.json
+
+      - name: Upload Trivy scan HTML results
         uses: actions/upload-artifact@v4
         with:
-          name: trivy-results
-          path: trivy-results.html
+          name: trivy-results-html
+          path: trivy-report.html
           retention-days: 10
+
+      - name: Upload Trivy scan JSON results
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-results-json
+          path: trivy-results.json
+          retention-days: 10
+     
