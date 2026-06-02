@@ -20,8 +20,9 @@ jobs:
         with:
           scan-type: fs
           scan-ref: .
-          format: json
-          output: trivy-results.json
+          format: template
+          template: '@contrib/html.tpl'
+          output: trivy-results.html
           exit-code: '0'
           vuln-type: os,library
           scanners: vuln
@@ -30,5 +31,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: trivy-results
-          path: trivy-results.json
+          path: trivy-results.html
           retention-days: 10
