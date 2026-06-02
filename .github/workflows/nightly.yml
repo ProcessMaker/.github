@@ -15,13 +15,19 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
 
+      - name: Download Trivy HTML template
+        run: |
+          mkdir -p .github/trivy
+          curl -fsSL -o .github/trivy/html.tpl \
+            https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl
+
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
           format: template
-          template: "@$HOME/.local/bin/trivy-bin/contrib/html.tpl"
+          template: "@${{ github.workspace }}/.github/trivy/html.tpl"
           output: trivy-results.html
           exit-code: '0'
           vuln-type: os,library
