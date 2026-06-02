@@ -21,7 +21,7 @@ jobs:
           scan-type: fs
           scan-ref: .
           format: template
-          template: '@contrib/html.tpl'
+          template: '@/contrib/html.tpl'
           output: trivy-results.html
           exit-code: '0'
           vuln-type: os,library
