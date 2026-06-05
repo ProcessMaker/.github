@@ -10,6 +10,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Load repository list
         id: repos
@@ -29,23 +31,16 @@ jobs:
           printf 'Repositories to sync:\n'
           printf '  - %s\n' "${repos[@]}"
 
-      - name: Generate token using ProcessMaker CICD App
-        id: app-token
-        uses: actions/create-github-app-token@v3
+      - uses: ./.github/actions/setup-github-app-git
         with:
-          client-id: Iv23liEEWBEvXnSckkld
           private-key: ${{ secrets.PM_CICD_APP_PRIVATE_KEY }}
-          owner: ProcessMaker
           repositories: ${{ steps.repos.outputs.list }}
 
       - name: Sync workflow templates
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           ORG_NAME: ProcessMaker
         run: |
           set -euo pipefail
-
-          gh auth setup-git
 
           TEMPLATES_DIR="workflow_templates"
 
@@ -99,12 +94,7 @@ jobs:
             if git diff --cached --quiet; then
               echo "No changes for $repo"
             else
-              git config user.name "ProcessMaker CICD App"
-              git config user.email "engineering@processmaker.com"
-              git config commit.gpgsign false
-
               git commit -m "chore: sync workflow templates"
-              git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${ORG_NAME}/${repo}.git"
               git push origin HEAD
             fi
 

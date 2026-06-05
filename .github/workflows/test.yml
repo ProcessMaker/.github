@@ -1,0 +1,24 @@
+name: TEST - Update README
+
+on:
+  workflow_dispatch:
+
+jobs:
+  update-repo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-github-app-git
+        with:
+          private-key: ${{ secrets.PM_CICD_APP_PRIVATE_KEY }}
+          repositories: security-scans
+
+      - name: Do other things
+        run: |
+          git clone https://github.com/ProcessMaker/security-scans.git
+          cd security-scans
+          echo "." >> README.md
+          git add README.md
+          git commit -m "Add period to README - test"
+          git push
