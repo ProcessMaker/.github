@@ -21,30 +21,31 @@ jobs:
           scan-type: fs
           scan-ref: .
           format: json
-          output: trivy-results.json
+          output: ${{ github.event.repository.name }}.json
           exit-code: '0'
           vuln-type: os,library
           scanners: vuln
 
-      - name: Convert Trivy JSON to HTML
+      - name: Generate token using ProcessMaker CICD App
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: Iv23liEEWBEvXnSckkld
+          private-key: ${{ secrets.PM_CICD_APP_PRIVATE_KEY }}
+
+      - name: Checkout security-scans
+        uses: actions/checkout@v4
+        with:
+          repository: ProcessMaker/security-scans
+          token: ${{ steps.app-token.outputs.token }}
+          path: security-scans
+
+      - name: Commit and push results
+        working-directory: security-scans
         run: |
-          # 1. Download the official HTML template from the Aqua Security repository
-          wget https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl
-          
-          # 2. Use the local Trivy CLI binary installed by trivy-action to convert the report
-          trivy convert --format template --template "@html.tpl" -o trivy-report.html trivy-results.json
-
-      - name: Upload Trivy scan HTML results
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-results-html
-          path: trivy-report.html
-          retention-days: 10
-
-      - name: Upload Trivy scan JSON results
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-results-json
-          path: trivy-results.json
-          retention-days: 10
-     
+          cp ../${{ github.event.repository.name }}.json trivy-results/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add trivy-results/${{ github.event.repository.name }}.json
+          git diff --staged --quiet || git commit -m "Update Trivy results for ${{ github.event.repository.name }}"
+          git push
