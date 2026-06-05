@@ -1,4 +1,4 @@
-This folder contains templates that get synced to repositories listed in repositories.txt. That file has one repo per line and corresponds to `https://github.com/ProcessMaker/<repo>`
+This folder contains templates that get synced to repositories listed in repositories.txt. That file has one repo per line and corresponds to `https://github.com/ProcessMaker/<repo>`. The same list is used to scope the CICD app token (e.g. `processmaker,package-ai,package-webentry`).
 
 To sync these, run the "Sync Workflow Templates" action at https://github.com/ProcessMaker/.github/actions
 
