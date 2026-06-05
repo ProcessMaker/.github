@@ -94,14 +94,15 @@ jobs:
             #   exit 1
             # fi
 
-            if git diff --quiet; then
+            git add .github/workflows/
+
+            if git diff --cached --quiet; then
               echo "No changes for $repo"
             else
               git config user.name "ProcessMaker CICD App"
               git config user.email "engineering@processmaker.com"
               git config commit.gpgsign false
 
-              git add .github/workflows/
               git commit -m "chore: sync workflow templates"
               git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${ORG_NAME}/${repo}.git"
               git push origin HEAD
