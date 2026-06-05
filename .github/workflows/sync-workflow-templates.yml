@@ -86,12 +86,13 @@ jobs:
 
             cd "$repo"
 
-            perms="$(gh api "repos/$ORG_NAME/$repo" --jq '.permissions')"
-            echo "Token permissions for $ORG_NAME/$repo: $perms"
-            if [ "$(echo "$perms" | jq -r '.push')" != "true" ]; then
-              echo "::error::Token cannot push to $ORG_NAME/$repo. On the org installation (not app settings), set Repository permissions → Contents to Read and write, then approve any pending permission request."
-              exit 1
-            fi
+            # This permission check incorrectly checks the user, not the app permissions
+            # perms="$(gh api "repos/$ORG_NAME/$repo" --jq '.permissions')"
+            # echo "Token permissions for $ORG_NAME/$repo: $perms"
+            # if [ "$(echo "$perms" | jq -r '.push')" != "true" ]; then
+            #   echo "::error::Token cannot push to $ORG_NAME/$repo. On the org installation (not app settings), set Repository permissions → Contents to Read and write, then approve any pending permission request."
+            #   exit 1
+            # fi
 
             if git diff --quiet; then
               echo "No changes for $repo"
