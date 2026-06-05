@@ -1,0 +1,93 @@
+name: Sync Workflow Templates
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync-workflow-templates:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate token using ProcessMaker CICD App
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: Iv23liEEWBEvXnSckkld
+          private-key: ${{ secrets.PM_CICD_APP_PRIVATE_KEY }}
+          owner: ProcessMaker
+
+      - name: Sync workflow templates
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ORG_NAME: ProcessMaker
+        run: |
+          set -euo pipefail
+
+          gh auth setup-git
+
+          TEMPLATES_DIR="workflow_templates"
+
+          shopt -s nullglob
+          templates=("$TEMPLATES_DIR"/*.yml)
+          if [ ${#templates[@]} -eq 0 ]; then
+            echo "::error::No workflow templates found in $TEMPLATES_DIR"
+            exit 1
+          fi
+
+          echo "Workflow templates to sync:"
+          printf '  - %s\n' "${templates[@]}"
+
+          echo "Repositories accessible to this CICD app installation:"
+          mapfile -t ACCESSIBLE_REPOS < <(
+            gh api /installation/repositories --paginate --jq '.repositories[].name' | sort -u
+          )
+          printf '  - %s\n' "${ACCESSIBLE_REPOS[@]}"
+
+          while IFS= read -r repo || [ -n "$repo" ]; do
+            [ -z "$repo" ] && continue
+            [[ "$repo" =~ ^# ]] && continue
+
+            echo "Processing $ORG_NAME/$repo"
+
+            if ! printf '%s\n' "${ACCESSIBLE_REPOS[@]}" | grep -qx "$repo"; then
+              echo "::error::CICD app cannot access $ORG_NAME/$repo. Org install exists, but this repo is not in the app's repository access list. Add it at https://github.com/organizations/ProcessMaker/settings/installations (Configure → Repository access)."
+              exit 1
+            fi
+
+            rm -rf "$repo"
+            gh repo clone "$ORG_NAME/$repo" "$repo" -- --depth 1
+
+            mkdir -p "$repo/.github/workflows"
+            for template in "${templates[@]}"; do
+              cp "$template" "$repo/.github/workflows/$(basename "$template")"
+            done
+
+            cd "$repo"
+
+            perms="$(gh api "repos/$ORG_NAME/$repo" --jq '.permissions')"
+            echo "Token permissions for $ORG_NAME/$repo: $perms"
+            if [ "$(echo "$perms" | jq -r '.push')" != "true" ]; then
+              echo "::error::Token cannot push to $ORG_NAME/$repo. On the org installation (not app settings), set Repository permissions → Contents to Read and write, then approve any pending permission request."
+              exit 1
+            fi
+
+            if git diff --quiet; then
+              echo "No changes for $repo"
+            else
+              git config user.name "ProcessMaker CICD App"
+              git config user.email "engineering@processmaker.com"
+              git config commit.gpgsign false
+
+              git add .github/workflows/
+              git commit -m "chore: sync workflow templates"
+              git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${ORG_NAME}/${repo}.git"
+              git push origin HEAD
+            fi
+
+            cd ..
+            rm -rf "$repo"
+
+          done < "$TEMPLATES_DIR/repositories.txt"
