@@ -32,6 +32,7 @@ jobs:
         with:
           client-id: Iv23liEEWBEvXnSckkld
           private-key: ${{ secrets.PM_CICD_APP_PRIVATE_KEY }}
+          owner: ProcessMaker
 
       - name: Checkout security-scans
         uses: actions/checkout@v4
