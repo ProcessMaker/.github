@@ -54,12 +54,6 @@ jobs:
           echo "Workflow templates to sync:"
           printf '  - %s\n' "${templates[@]}"
 
-          echo "Repositories accessible to this CICD app installation:"
-          mapfile -t ACCESSIBLE_REPOS < <(
-            gh api /installation/repositories --paginate --jq '.repositories[].name' | sort -u
-          )
-          printf '  - %s\n' "${ACCESSIBLE_REPOS[@]}"
-
           while IFS= read -r repo || [ -n "$repo" ]; do
             [ -z "$repo" ] && continue
             [[ "$repo" =~ ^# ]] && continue
@@ -81,21 +75,13 @@ jobs:
 
             cd "$repo"
 
-            # This permission check incorrectly checks the user, not the app permissions
-            # perms="$(gh api "repos/$ORG_NAME/$repo" --jq '.permissions')"
-            # echo "Token permissions for $ORG_NAME/$repo: $perms"
-            # if [ "$(echo "$perms" | jq -r '.push')" != "true" ]; then
-            #   echo "::error::Token cannot push to $ORG_NAME/$repo. On the org installation (not app settings), set Repository permissions → Contents to Read and write, then approve any pending permission request."
-            #   exit 1
-            # fi
-
             git add .github/workflows/
 
             if git diff --cached --quiet; then
               echo "No changes for $repo"
             else
               git commit -m "chore: sync workflow templates"
-              git push origin HEAD
+              git push
             fi
 
             cd ..
