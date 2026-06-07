@@ -60,11 +60,6 @@ jobs:
 
             echo "Processing $ORG_NAME/$repo"
 
-            if ! printf '%s\n' "${ACCESSIBLE_REPOS[@]}" | grep -qx "$repo"; then
-              echo "::error::CICD app cannot access $ORG_NAME/$repo. Org install exists, but this repo is not in the app's repository access list. Add it at https://github.com/organizations/ProcessMaker/settings/installations (Configure → Repository access)."
-              exit 1
-            fi
-
             rm -rf "$repo"
             gh repo clone "$ORG_NAME/$repo" "$repo" -- --depth 1
 
