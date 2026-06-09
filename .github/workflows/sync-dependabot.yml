@@ -2,10 +2,6 @@ name: Sync Dependabot Config
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - '.github/templates/dependabot.yml'
-      - 'repos-dependabot.txt'
 
 jobs:
   sync-dependabot:
@@ -27,37 +23,19 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Repositories accessible to this CICD app installation:"
-          mapfile -t ACCESSIBLE_REPOS < <(
-            gh api /installation/repositories --paginate --jq '.repositories[].name' | sort -u
-          )
-          printf '  - %s\n' "${ACCESSIBLE_REPOS[@]}"
-
           while IFS= read -r repo || [ -n "$repo" ]; do
             [ -z "$repo" ] && continue
             [[ "$repo" =~ ^# ]] && continue
 
             echo "Processing $ORG_NAME/$repo"
 
-            if ! printf '%s\n' "${ACCESSIBLE_REPOS[@]}" | grep -qx "$repo"; then
-              echo "::error::CICD app cannot access $ORG_NAME/$repo. Org install exists, but this repo is not in the app's repository access list. Add it at https://github.com/organizations/ProcessMaker/settings/installations (Configure → Repository access)."
-              exit 1
-            fi
-
             rm -rf "$repo"
-            gh repo clone "$ORG_NAME/$repo" "$repo" -- --depth 1
+            git clone --depth 1 "https://github.com/$ORG_NAME/$repo.git" "$repo"
 
             mkdir -p "$repo/.github"
             cp .github/templates/dependabot.yml "$repo/.github/dependabot.yml"
 
             cd "$repo"
-
-            perms="$(gh api "repos/$ORG_NAME/$repo" --jq '.permissions')"
-            echo "Token permissions for $ORG_NAME/$repo: $perms"
-            if [ "$(echo "$perms" | jq -r '.push')" != "true" ]; then
-              echo "::error::Token cannot push to $ORG_NAME/$repo. On the org installation (not app settings), set Repository permissions → Contents to Read and write, then approve any pending permission request."
-              exit 1
-            fi
 
             if git diff --quiet; then
               echo "No changes for $repo"
