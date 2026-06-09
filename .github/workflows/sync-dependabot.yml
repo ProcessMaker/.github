@@ -37,10 +37,11 @@ jobs:
 
             cd "$repo"
 
-            if git diff --quiet; then
+            git add .github/dependabot.yml
+
+            if git diff --cached --quiet; then
               echo "No changes for $repo"
             else
-              git add .github/dependabot.yml
               git commit -m "chore: sync dependabot config"
               git push
             fi
