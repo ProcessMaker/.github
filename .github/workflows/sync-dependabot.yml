@@ -14,22 +14,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Generate token using ProcessMaker CICD App
-        id: app-token
-        uses: actions/create-github-app-token@v3
         with:
-          client-id: Iv23liEEWBEvXnSckkld
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-github-app-git
+        with:
           private-key: ${{ secrets.PM_CICD_APP_PRIVATE_KEY }}
-          owner: ProcessMaker
+
       - name: Sync Dependabot Config
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           ORG_NAME: ProcessMaker
         run: |
           set -euo pipefail
-
-          gh auth setup-git
 
           echo "Repositories accessible to this CICD app installation:"
           mapfile -t ACCESSIBLE_REPOS < <(
@@ -66,14 +62,9 @@ jobs:
             if git diff --quiet; then
               echo "No changes for $repo"
             else
-              git config user.name "ProcessMaker CICD App"
-              git config user.email "engineering@processmaker.com"
-              git config commit.gpgsign false
-
               git add .github/dependabot.yml
               git commit -m "chore: sync dependabot config"
-              git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${ORG_NAME}/${repo}.git"
-              git push origin HEAD
+              git push
             fi
 
             cd ..
