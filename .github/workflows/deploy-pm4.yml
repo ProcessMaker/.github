@@ -345,8 +345,6 @@ jobs:
       contents: read
     steps:
       - name: Delete instance EKS
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         run: |           
           set +e
           FAILED=0
@@ -437,28 +435,31 @@ jobs:
           fi
           echo "Delete completed successfully"
 
-          # Strip ci:redeploy from the PR body so it does not re-trigger on later edits.
-          # Uses GITHUB_TOKEN so this edit does not start a new workflow run.
-          if [ "${{ contains(github.event.pull_request.body, 'ci:redeploy') }}" = "true" ] && \
-             [ "${{ github.event.action }}" != "closed" ] && \
-             [ "${{ inputs.delete }}" = "" ]; then
-            PR_NUMBER=${{ github.event.pull_request.number }}
-            REPO=${{ github.repository }}
-            BODY=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.body // empty')
-            NEW_BODY="${BODY//ci:redeploy/}"
-            if [ "$BODY" = "$NEW_BODY" ]; then
-              echo "ci:redeploy tag not found in PR body; nothing to do"
-            else
-              if gh api --method PATCH "repos/${REPO}/pulls/${PR_NUMBER}" \
-                   -f body="$NEW_BODY" >/tmp/pr_update_out 2>&1; then
-                echo "Removed ci:redeploy from PR body"
-              else
-                echo "WARN: Failed to update PR body"
-                cat /tmp/pr_update_out || true
-                # Do not fail the delete job — rebuild can still proceed
-              fi
-            fi
-          fi
+      # Strip ci:redeploy from the PR body so it does not re-trigger on later edits.
+      # Uses github.token (default) so this edit does not start a new workflow run.
+      # actions/github-script needs no gh binary on the self-hosted runner.
+      - name: Remove ci:redeploy from PR body
+        if: |
+          contains(github.event.pull_request.body, 'ci:redeploy') &&
+          github.event.action != 'closed' &&
+          inputs.delete == ''
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || '';
+            if (!body.includes('ci:redeploy')) {
+              core.info('ci:redeploy tag not found in PR body; nothing to do');
+              return;
+            }
+            const newBody = body.replaceAll('ci:redeploy', '');
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              body: newBody,
+            });
+            core.info('Removed ci:redeploy from PR body');
 
   runPhpUnit:
     name: run-phpunit
