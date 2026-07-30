@@ -49,8 +49,7 @@ jobs:
       always() &&
       (needs.deleteEKS.result == 'success' || needs.deleteEKS.result == 'skipped') &&
       github.event.action != 'closed' &&
-      inputs.delete == '' &&
-      !(github.event.action == 'edited' && contains(github.event.changes.body.from, 'ci:redeploy') && !contains(github.event.pull_request.body, 'ci:redeploy'))
+      inputs.delete == ''
     runs-on: ${{ vars.RUNNER }}
     steps:
 
@@ -328,8 +327,15 @@ jobs:
     name: Delete Instance
     if: github.event.action == 'closed' || inputs.delete != '' || contains(github.event.pull_request.body, 'ci:redeploy')
     runs-on: self-hosted
+    # GITHUB_TOKEN needs write to strip ci:redeploy from the PR body.
+    # Using github.token (not GIT_TOKEN) so the edit does not trigger a new workflow run.
+    permissions:
+      pull-requests: write
+      contents: read
     steps:
       - name: Delete instance EKS
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |           
           set +e
           FAILED=0
@@ -420,12 +426,32 @@ jobs:
           fi
           echo "Delete completed successfully"
 
+          # Strip ci:redeploy from the PR body so it does not re-trigger on later edits.
+          # Uses GITHUB_TOKEN so this edit does not start a new workflow run.
+          if [ "${{ contains(github.event.pull_request.body, 'ci:redeploy') }}" = "true" ] && \
+             [ "${{ github.event.action }}" != "closed" ] && \
+             [ "${{ inputs.delete }}" = "" ]; then
+            PR_NUMBER=${{ github.event.pull_request.number }}
+            REPO=${{ github.repository }}
+            BODY=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.body // empty')
+            NEW_BODY="${BODY//ci:redeploy/}"
+            if [ "$BODY" = "$NEW_BODY" ]; then
+              echo "ci:redeploy tag not found in PR body; nothing to do"
+            else
+              if gh api --method PATCH "repos/${REPO}/pulls/${PR_NUMBER}" \
+                   -f body="$NEW_BODY" >/tmp/pr_update_out 2>&1; then
+                echo "Removed ci:redeploy from PR body"
+              else
+                echo "WARN: Failed to update PR body"
+                cat /tmp/pr_update_out || true
+                # Do not fail the delete job — rebuild can still proceed
+              fi
+            fi
+          fi
+
   runPhpUnit:
     name: run-phpunit
-    if: |
-      github.event.action != 'closed' &&
-      inputs.delete == '' &&
-      !(github.event.action == 'edited' && contains(github.event.changes.body.from, 'ci:redeploy') && !contains(github.event.pull_request.body, 'ci:redeploy'))
+    if: github.event.action != 'closed' && inputs.delete == ''
     needs: imageEKS
     runs-on: ${{ vars.RUNNER }}
     steps:
@@ -495,48 +521,3 @@ jobs:
             -Dsonar.tests=.
             -Dsonar.test.inclusions=**/*Test.php
             -Dsonar.php.coverage.reportPaths=./pm4-k8s-distribution/images/pm4-tools/coverage.xml
-
-  # Runs after the full redeploy pipeline so removing the tag (which fires an
-  # "edited" event) cannot cancel in-progress jobs via concurrency.
-  # imageEKS/runPhpUnit skip that follow-up edited run when the only change was
-  # stripping ci:redeploy from the body.
-  clearRedeployTag:
-    name: Clear ci:redeploy tag
-    needs: [deleteEKS, imageEKS, deployEKS, runAPITest, runTestbench, runPhpUnit]
-    if: |
-      always() &&
-      contains(github.event.pull_request.body, 'ci:redeploy') &&
-      github.event.action != 'closed' &&
-      inputs.delete == '' &&
-      needs.deleteEKS.result != 'cancelled'
-    runs-on: ${{ vars.RUNNER }}
-    steps:
-      - name: Remove ci:redeploy from PR body
-        env:
-          GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
-        run: |
-          PR_NUMBER=${{ github.event.pull_request.number }}
-          REPO=${{ github.repository }}
-          BODY=$(curl -s \
-            -H "Authorization: token ${GIT_TOKEN}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/${REPO}/pulls/${PR_NUMBER}" | jq -r '.body // empty')
-          NEW_BODY="${BODY//ci:redeploy/}"
-          if [ "$BODY" = "$NEW_BODY" ]; then
-            echo "ci:redeploy tag not found in PR body; nothing to do"
-            exit 0
-          fi
-          json_payload=$(jq -n --arg body "$NEW_BODY" '{body: $body}')
-          HTTP_CODE=$(curl -s -o /tmp/pr_update_out -w "%{http_code}" -X PATCH \
-            -H "Authorization: token ${GIT_TOKEN}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            -H "Content-Type: application/json" \
-            -d "$json_payload" \
-            "https://api.github.com/repos/${REPO}/pulls/${PR_NUMBER}")
-          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-            echo "Removed ci:redeploy from PR body"
-          else
-            echo "Failed to update PR body (HTTP $HTTP_CODE)"
-            cat /tmp/pr_update_out
-            exit 1
-          fi
