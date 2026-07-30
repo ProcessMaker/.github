@@ -110,7 +110,12 @@ jobs:
   
   deployEKS:
     name: deploy-EKS
-    if: contains(github.event.pull_request.body, 'ci:deploy') || contains(github.event.pull_request.body, 'ci:redeploy')
+    # always() opts out of the skip that cascades down from deleteEKS when it does not run.
+    if: |
+      always() &&
+      needs.imageEKS.result == 'success' &&
+      (contains(github.event.pull_request.body, 'ci:deploy') ||
+       contains(github.event.pull_request.body, 'ci:redeploy'))
     needs: imageEKS
     runs-on: ${{ vars.RUNNER }}
     steps:
@@ -213,7 +218,10 @@ jobs:
   runAPITest:
     name: Run API Tests
     needs: [deployEKS]
-    if: contains(github.event.pull_request.body, 'ci:api-test')
+    if: |
+      always() &&
+      needs.deployEKS.result == 'success' &&
+      contains(github.event.pull_request.body, 'ci:api-test')
     runs-on: ${{ vars.RUNNER }}
     steps:
       - name: Checkout
@@ -294,7 +302,10 @@ jobs:
   runTestbench:
     name: Run Testbench
     needs: [deployEKS]
-    if: contains(github.event.pull_request.body, 'ci:run-testbench')
+    if: |
+      always() &&
+      needs.deployEKS.result == 'success' &&
+      contains(github.event.pull_request.body, 'ci:run-testbench')
     runs-on: ${{ vars.RUNNER }}
     steps:
       - name: Checkout testbench
@@ -451,7 +462,11 @@ jobs:
 
   runPhpUnit:
     name: run-phpunit
-    if: github.event.action != 'closed' && inputs.delete == ''
+    if: |
+      always() &&
+      needs.imageEKS.result == 'success' &&
+      github.event.action != 'closed' &&
+      inputs.delete == ''
     needs: imageEKS
     runs-on: ${{ vars.RUNNER }}
     steps:
