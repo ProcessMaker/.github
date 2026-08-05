@@ -34,16 +34,22 @@ env:
   BASE_IMAGE: ${{ secrets.REGISTRY_HOST }}/processmaker/processmaker:base
   CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
   SKIP_REDEPLOY: ${{ (contains(github.event.pull_request.body, 'ci:skip-redeploy')) && 'true' || 'false' }}
+  CI_REDEPLOY: ${{ (contains(github.event.pull_request.body, 'ci:redeploy')) && 'true' || 'false' }}
   # K8S_BRANCH: ${{ contains(github.event.pull_request.body, 'ci:next') && 'next' || 'release-2024-fall' }}
   PMAI_HOST: ${{ contains(github.event.pull_request.body, 'ci:pmai_dev') && 'pmai-svc.pmai-system-dev.svc.cluster.local' || 'pmai-svc.pmai-system.svc.cluster.local' }}
   PMAI_HOST_WS: ${{ contains(github.event.pull_request.body, 'ci:pmai_dev') && 'pmai-dev-ws.engk8s.processmaker.net' || 'pmai-ws.engk8s.processmaker.net' }}
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.delete }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   imageEKS:
     name: build-docker-image-EKS
-    if: github.event.action != 'closed' && inputs.delete == ''
+    needs: [deleteEKS]
+    if: |
+      always() &&
+      (needs.deleteEKS.result == 'success' || needs.deleteEKS.result == 'skipped') &&
+      github.event.action != 'closed' &&
+      inputs.delete == ''
     runs-on: ${{ vars.RUNNER }}
     steps:
 
@@ -104,7 +110,12 @@ jobs:
   
   deployEKS:
     name: deploy-EKS
-    if: contains(github.event.pull_request.body, 'ci:deploy')
+    # always() opts out of the skip that cascades down from deleteEKS when it does not run.
+    if: |
+      always() &&
+      needs.imageEKS.result == 'success' &&
+      (contains(github.event.pull_request.body, 'ci:deploy') ||
+       contains(github.event.pull_request.body, 'ci:redeploy'))
     needs: imageEKS
     runs-on: ${{ vars.RUNNER }}
     steps:
@@ -207,7 +218,10 @@ jobs:
   runAPITest:
     name: Run API Tests
     needs: [deployEKS]
-    if: contains(github.event.pull_request.body, 'ci:api-test')
+    if: |
+      always() &&
+      needs.deployEKS.result == 'success' &&
+      contains(github.event.pull_request.body, 'ci:api-test')
     runs-on: ${{ vars.RUNNER }}
     steps:
       - name: Checkout
@@ -288,7 +302,10 @@ jobs:
   runTestbench:
     name: Run Testbench
     needs: [deployEKS]
-    if: contains(github.event.pull_request.body, 'ci:run-testbench')
+    if: |
+      always() &&
+      needs.deployEKS.result == 'success' &&
+      contains(github.event.pull_request.body, 'ci:run-testbench')
     runs-on: ${{ vars.RUNNER }}
     steps:
       - name: Checkout testbench
@@ -319,11 +336,19 @@ jobs:
 
   deleteEKS:
     name: Delete Instance
-    if: github.event.action == 'closed' || inputs.delete != ''
+    if: github.event.action == 'closed' || inputs.delete != '' || contains(github.event.pull_request.body, 'ci:redeploy')
     runs-on: self-hosted
+    # GITHUB_TOKEN needs write to strip ci:redeploy from the PR body.
+    # Using github.token (not GIT_TOKEN) so the edit does not trigger a new workflow run.
+    permissions:
+      pull-requests: write
+      contents: read
     steps:
       - name: Delete instance EKS
         run: |           
+          set +e
+          FAILED=0
+
           # If inputs.delete does not equal '', set the IMAGE_TAG to the value of inputs.delete
           if [ "${{ inputs.delete }}" != "" ]; then
             IMAGE_TAG=${{ inputs.delete }}
@@ -331,35 +356,118 @@ jobs:
             IMAGE_TAG=${{ env.IMAGE_TAG }}
           fi
           INSTANCE=$(echo -n $IMAGE_TAG | md5sum | head -c 10)
+
+          # Delete Harbor image only on PR close / manual delete — not on ci:redeploy
+          DELETE_HARBOR=false
+          if [ "${{ github.event.action }}" = "closed" ] || [ "${{ inputs.delete }}" != "" ]; then
+            DELETE_HARBOR=true
+          fi
+
           if kubectl get namespace/ci-$INSTANCE-ns-pm4 ; then
-            echo "Deleting Instace :: ci-$INSTANCE"
-            helm delete ci-$INSTANCE
-            kubectl delete namespace ci-$INSTANCE-ns-pm4
+            echo "Deleting Instance :: ci-$INSTANCE"
+            helm delete ci-$INSTANCE || true
+            kubectl delete namespace ci-$INSTANCE-ns-pm4 || true
+       
             #Drop database
             deploy_db="pm4_ci-${INSTANCE}%"
             deploy_ai="\`pm4_ci-$INSTANCE_ai\`"
 
             # check that that string length of $deploy_db is 12 or more as a safety check. If its less than 12, exit now
             if [ ${#deploy_db} -lt 12 ]; then
+              echo "ERROR: deploy_db safety check failed (length ${#deploy_db})"
               exit 1
             fi
 
-            # Drop the main database including any tenant databases
-            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -h ${{ secrets.RDS_ENG }} -N -e "SHOW DATABASES LIKE '${deploy_db}'" | xargs -I{} mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -h ${{ secrets.RDS_ENG }} -e "DROP DATABASE IF EXISTS \`{}\`;"
+            # Drop the main database including any tenant databases.
+            # Continue on failure so a half-built instance still gets cleaned up.
+            set -o pipefail
+            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -h ${{ secrets.RDS_ENG }} -N -e "SHOW DATABASES LIKE '${deploy_db}'" | xargs -r -I{} mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -h ${{ secrets.RDS_ENG }} -e "DROP DATABASE IF EXISTS \`{}\`;"
+            if [ $? -ne 0 ]; then
+              echo "WARN: Failed dropping databases matching ${deploy_db}"
+              FAILED=1
+            fi
+            set +o pipefail
 
             mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP DATABASE IF EXISTS $deploy_ai" -h ${{ secrets.RDS_ENG }}
+            if [ $? -ne 0 ]; then
+              echo "WARN: Failed dropping AI database $deploy_ai"
+              FAILED=1
+            fi
+
             mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP USER IF EXISTS 'user_ci-$INSTANCE'@'%'" -h ${{ secrets.RDS_ENG }}
+            if [ $? -ne 0 ]; then
+              echo "WARN: Failed dropping user user_ci-$INSTANCE"
+              FAILED=1
+            fi
+
             mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP USER IF EXISTS 'user_ci-$INSTANCE_ai'@'%'" -h ${{ secrets.RDS_ENG }}
-            #Drop image Harbor        
-            curl -X DELETE -u ${{ secrets.REGISTRY_USERNAME }}:${{ secrets.REGISTRY_PASSWORD }} "https://${{ secrets.REGISTRY_HOST }}/api/v2.0/projects/processmaker/repositories/enterprise/artifacts/${IMAGE_TAG}"
+            if [ $? -ne 0 ]; then
+              echo "WARN: Failed dropping user user_ci-$INSTANCE_ai"
+              FAILED=1
+            fi
+
             echo "The instance [https://ci-$INSTANCE.engk8s.processmaker.net] was deleted!!"
           else
             echo "The pull request does not have an instance on K8s [https://ci-$INSTANCE.engk8s.processmaker.net] not found!!"
           fi
 
+          if [ "$DELETE_HARBOR" = "true" ]; then
+            echo "Deleting image from Harbor: ${IMAGE_TAG}"
+            HTTP_CODE=$(curl -s -o /tmp/harbor_delete_out -w "%{http_code}" -X DELETE \
+              -u ${{ secrets.REGISTRY_USERNAME }}:${{ secrets.REGISTRY_PASSWORD }} \
+              "https://${{ secrets.REGISTRY_HOST }}/api/v2.0/projects/processmaker/repositories/enterprise/artifacts/${IMAGE_TAG}")
+            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+              echo "Harbor image deleted (HTTP $HTTP_CODE)"
+            elif [ "$HTTP_CODE" = "404" ]; then
+              echo "Harbor image not found (already deleted)"
+            else
+              echo "WARN: Failed deleting Harbor image ${IMAGE_TAG} (HTTP $HTTP_CODE)"
+              cat /tmp/harbor_delete_out || true
+              FAILED=1
+            fi
+          else
+            echo "Skipping Harbor image delete (ci:redeploy)"
+          fi
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "One or more delete operations failed"
+            exit 1
+          fi
+          echo "Delete completed successfully"
+
+      # Strip ci:redeploy from the PR body so it does not re-trigger on later edits.
+      # Uses github.token (default) so this edit does not start a new workflow run.
+      # actions/github-script needs no gh binary on the self-hosted runner.
+      - name: Remove ci:redeploy from PR body
+        if: |
+          contains(github.event.pull_request.body, 'ci:redeploy') &&
+          github.event.action != 'closed' &&
+          inputs.delete == ''
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || '';
+            if (!body.includes('ci:redeploy')) {
+              core.info('ci:redeploy tag not found in PR body; nothing to do');
+              return;
+            }
+            const newBody = body.replaceAll('ci:redeploy', '');
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              body: newBody,
+            });
+            core.info('Removed ci:redeploy from PR body');
+
   runPhpUnit:
     name: run-phpunit
-    if: github.event.action != 'closed' && inputs.delete == ''
+    if: |
+      always() &&
+      needs.imageEKS.result == 'success' &&
+      github.event.action != 'closed' &&
+      inputs.delete == ''
     needs: imageEKS
     runs-on: ${{ vars.RUNNER }}
     steps:
