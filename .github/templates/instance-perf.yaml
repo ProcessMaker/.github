@@ -1,0 +1,85 @@
+# Performance test instance: in-cluster MySQL only (database.deploy: true), no RDS.
+# Placeholders: {{INSTANCE}}, {{PERF_NODE_LABEL}}, {{APP_VERSION}}, {{CUSTOMER_LICENSES_PAT}}, {{KEYCLOAK_CLIENT_SECRET}}, {{KEYCLOAK_PASSWORD}}
+# PERF_NODE_LABEL: node selector/taint value (e.g. ci-INSTANCE-baseline or ci-INSTANCE-update) for targeting the correct node group.
+# Release name is set at helm install time (e.g. ci-INSTANCE-perf-baseline); chart uses it for ingress host.
+appVersion: {{APP_VERSION}}
+eksCluster: pm4-eng
+appConfig:
+  https: true
+  subdomain: .engk8s.processmaker.net
+  customSecurityPolicy: true
+  customSecurityPolicyUrl: 'https://adobexdplatform.com https://*.quicksight.aws.amazon.com https://www.canva.com https://excalidraw.com https://www.figma.com https://flocus.com https://www.framer.com https://giphy.com https://lookerstudio.google.com https://maps.google.com https://docs.google.com https://www.loom.com https://miro.com https://mixpanel.com https://pitch.com https://prezi.com https://www.sketch.com https://www.slideshare.net https://supademo.com https://www.tableau.com https://forms.app https://vimeo.com https://www.youtube.com'
+  googleApiToken: foo
+  licenseRepo: processmaker/customer-licenses.git
+  licenseBranch: production
+  licenseGitToken: {{CUSTOMER_LICENSES_PAT}}
+deploy:
+  # Global scheduling: all workloads (web, scheduler, queue, redis, executor, mysql, soketi, pmai) target the perf node.
+  scheduling:
+    enable: true
+    tolerationsKey: 'performance'
+    tolerationsOperator: 'Equal'
+    tolerationsValue: '{{PERF_NODE_LABEL}}'
+    tolerationsEffect: 'NoSchedule'
+    nodeSelectorKey: 'performance'
+    nodeSelectorValue: '{{PERF_NODE_LABEL}}'
+  pmai:
+    openaiHost: pmai-svc.pmai-system.svc.cluster.local
+    deployDb: false
+    dbHost: pm4-eng-stm-rds-cluster.cluster-ckz0mnb6cuna.us-east-1.rds.amazonaws.com
+    dbName: pm4_perf-{{INSTANCE}}_ai
+    dbUsername: root
+    dbPassword: ''
+  volumes:
+    storageClassName: 'efs-sc'
+    storage:
+      diskSize: 1Gi
+  executor:
+    diskSize: 10Gi
+  resources:
+    enable: false
+database:
+  deploy: true
+  storageClassName: 'local-path'
+analytics:
+  awsRegion: us-east-1
+  awsS3Bucket: tmp-security-logs-to-download
+  intercom:
+    appId: memgomb2
+    company: ENG
+    env: ENG
+    identityKey: sooZOeIDJI02_388erBqFH4PtbF_aflV--r4Fjmr
+  logrocket:
+    enable: false
+    appId: gbuoqe/processmaker-4
+  dashboard: https://us-east-1.quicksight.aws.amazon.com/sn/embed/share/accounts/780138555770/dashboards/a0194bdc-a1a6-4414-85a2-ab652ded98e3?directory_alias=processmaker
+collaborativeModeler:
+  host: socketio-dev.processmaker.net
+  port: 443
+smartExtract:
+  hitlEnabled: true
+multitenancy:
+  enable: false
+microservices:
+  scriptExecutor:
+    enable: true
+    customExecutors: false
+    baseUrl: https://script-microsvr-us-east-1.processmaker.net
+    version: v4.15.0
+    keycloakClientId: microservices
+    keycloakClientSecret: {{KEYCLOAK_CLIENT_SECRET}}
+    keycloakBaseUrl: https://sso-microsvr-us-east-1.processmaker.net/realms/master/protocol/openid-connect/token
+    keycloakUsername: pminstance-us-east-1
+    keycloakPassword: {{KEYCLOAK_PASSWORD}}
+twilio:
+  enable: true
+  phoneNumber: "+17243958155"
+redis:
+  diskSize: 2Gi
+cicd: true
+otel: true
+loki: true
+s3Backup:
+  deploy: false
+stm:
+  enable: false
