@@ -46,7 +46,7 @@ jobs:
     name: build-docker-image-EKS
     needs: [deleteEKS]
     if: |
-      always() &&
+      !cancelled() &&
       (needs.deleteEKS.result == 'success' || needs.deleteEKS.result == 'skipped') &&
       github.event.action != 'closed' &&
       inputs.delete == ''
@@ -110,9 +110,10 @@ jobs:
   
   deployEKS:
     name: deploy-EKS
-    # always() opts out of the skip that cascades down from deleteEKS when it does not run.
+    # !cancelled() opts out of the skip that cascades down from deleteEKS when it does not
+    # run, without also opting out of concurrency cancellation the way always() does.
     if: |
-      always() &&
+      !cancelled() &&
       needs.imageEKS.result == 'success' &&
       (contains(github.event.pull_request.body, 'ci:deploy') ||
        contains(github.event.pull_request.body, 'ci:redeploy'))
@@ -219,7 +220,7 @@ jobs:
     name: Run API Tests
     needs: [deployEKS]
     if: |
-      always() &&
+      !cancelled() &&
       needs.deployEKS.result == 'success' &&
       contains(github.event.pull_request.body, 'ci:api-test')
     runs-on: ${{ vars.RUNNER }}
@@ -303,7 +304,7 @@ jobs:
     name: Run Testbench
     needs: [deployEKS]
     if: |
-      always() &&
+      !cancelled() &&
       needs.deployEKS.result == 'success' &&
       contains(github.event.pull_request.body, 'ci:run-testbench')
     runs-on: ${{ vars.RUNNER }}
@@ -464,7 +465,7 @@ jobs:
   runPhpUnit:
     name: run-phpunit
     if: |
-      always() &&
+      !cancelled() &&
       needs.imageEKS.result == 'success' &&
       github.event.action != 'closed' &&
       inputs.delete == ''
