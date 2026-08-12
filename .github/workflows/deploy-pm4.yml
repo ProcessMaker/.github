@@ -471,6 +471,10 @@ jobs:
       inputs.delete == ''
     needs: imageEKS
     runs-on: ${{ vars.RUNNER }}
+    timeout-minutes: 150
+    env:
+      PHPUNIT_CONTAINER: phpunit-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      PHPUNIT_COMPOSE_DIR: pm4-k8s-distribution/images/pm4-tools
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -501,21 +505,59 @@ jobs:
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
       - name: PHPUnits
-        run: |          
-          cd pm4-k8s-distribution/images/pm4-tools
+        run: |
+          set -uo pipefail
+          cd "$PHPUNIT_COMPOSE_DIR"
           docker pull $IMAGE
-          docker compose down -v
+          docker compose down -v --remove-orphans --timeout 0
           docker compose build phpunit
-          docker compose run phpunit
-          CONTAINER_ID=$(sudo docker ps -a | grep phpunit | awk '{print $1}')
-          echo "Copying coverage report from PHP Unit Container: $CONTAINER_ID"
-          if sudo docker exec $CONTAINER_ID test -f /opt/processmaker/coverage.xml; then
-            sudo docker cp $CONTAINER_ID:/opt/processmaker/coverage.xml coverage.xml
+
+          # Run detached instead of attached. An attached `docker compose run` swallows
+          # the runner's cancel signals: the container's PID 1 is sh, which ignores
+          # SIGTERM, so compose keeps waiting and the job hangs until GitHub gives up.
+          docker compose run --detach -T --name "$PHPUNIT_CONTAINER" phpunit
+
+          # SIGKILL the whole compose project so a cancel never waits on a stop timeout.
+          terminate() {
+            echo "Cancel requested ($1) - killing phpunit containers"
+            docker kill --signal KILL "$PHPUNIT_CONTAINER" || true
+            docker compose kill --signal KILL || true
+            exit 143
+          }
+          trap 'terminate SIGINT' INT
+          trap 'terminate SIGTERM' TERM
+
+          docker logs --follow "$PHPUNIT_CONTAINER" &
+          LOGS_PID=$!
+
+          # `docker wait` in the background keeps bash in its own interruptible `wait`,
+          # which is what lets the traps above fire immediately on cancel.
+          docker wait "$PHPUNIT_CONTAINER" > "$RUNNER_TEMP/phpunit-exit-code" &
+          wait $!
+          kill "$LOGS_PID" 2>/dev/null || true
+
+          PHPUNIT_EXIT=$(tr -dc '0-9' < "$RUNNER_TEMP/phpunit-exit-code")
+          echo "phpunit container exited with ${PHPUNIT_EXIT:-unknown}"
+
+          # docker cp works on the stopped container, docker exec does not.
+          echo "Copying coverage report from PHP Unit Container: $PHPUNIT_CONTAINER"
+          if docker cp "$PHPUNIT_CONTAINER:/opt/processmaker/coverage.xml" coverage.xml; then
             echo "COVERAGE_EXISTS=true" >> $GITHUB_ENV
           else
             echo "coverage.xml not found in container, skipping coverage archive and SonarQube"
             echo "COVERAGE_EXISTS=false" >> $GITHUB_ENV
           fi
+
+          exit "${PHPUNIT_EXIT:-1}"
+
+      - name: Force cleanup phpunit containers
+        if: always()
+        run: |
+          set -u
+          docker rm --force --volumes "$PHPUNIT_CONTAINER" || true
+          cd "$PHPUNIT_COMPOSE_DIR" || exit 0
+          docker compose kill --signal KILL || true
+          docker compose down -v --remove-orphans --timeout 0 || true
 
       - name: Archive code coverage
         if: env.COVERAGE_EXISTS == 'true'
