@@ -28,6 +28,9 @@ permissions:
   actions: write
   packages: write
 
+env:
+  GH_TOKEN: ${{ secrets.GIT_TOKEN }}
+
 concurrency:
   group: js-package-${{ github.repository }}-${{ inputs.stack_id || github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -86,11 +89,6 @@ jobs:
           ref: ${{ steps.ref.outputs.ref }}
           fetch-depth: 0
 
-      - uses: ProcessMaker/.github/.github/actions/setup-github-app-git@main
-        if: inputs.source_run_id != ''
-        with:
-          private-key: ${{ secrets.PM_CICD_APP_PRIVATE_KEY }}
-
       - name: Download upstream stack
         if: inputs.source_run_id != ''
         uses: ProcessMaker/.github/.github/actions/js-download-stack@main
@@ -125,10 +123,6 @@ jobs:
       final-repo: ${{ steps.cascade.outputs.final-repo }}
       final-run-id: ${{ steps.cascade.outputs.final-run-id }}
     steps:
-      - uses: ProcessMaker/.github/.github/actions/setup-github-app-git@main
-        with:
-          private-key: ${{ secrets.PM_CICD_APP_PRIVATE_KEY }}
-
       - id: cascade
         env:
           JS_REPOS: ${{ needs.pack.outputs.js-repos }}
@@ -192,11 +186,6 @@ jobs:
     if: always() && needs.pack.result == 'success' && (needs.cascade-pr.result == 'success' || needs.cascade-pr.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
-      - uses: ProcessMaker/.github/.github/actions/setup-github-app-git@main
-        if: needs.cascade-pr.result == 'success'
-        with:
-          private-key: ${{ secrets.PM_CICD_APP_PRIVATE_KEY }}
-
       - name: Download complete stack from downstream
         if: needs.cascade-pr.result == 'success'
         uses: ProcessMaker/.github/.github/actions/js-download-stack@main
@@ -270,13 +259,14 @@ jobs:
     if: needs.publish.result == 'success' && needs.publish.outputs.published == 'true' && needs.publish.outputs.has-js-downstream == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: ProcessMaker/.github/.github/actions/setup-github-app-git@main
-        with:
-          private-key: ${{ secrets.PM_CICD_APP_PRIVATE_KEY }}
-
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Configure git
+        run: |
+          git config --global user.name '${{ secrets.GH_USER }}'
+          git config --global user.email '${{ secrets.GH_EMAIL }}'
 
       - name: Release downstream JS packages
         env:
@@ -337,14 +327,14 @@ jobs:
           ref: ${{ github.event.release.tag_name }}
           path: released
 
-      - uses: ProcessMaker/.github/.github/actions/setup-github-app-git@main
-        with:
-          private-key: ${{ secrets.PM_CICD_APP_PRIVATE_KEY }}
-          repositories: processmaker
-
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Configure git
+        run: |
+          git config --global user.name '${{ secrets.GH_USER }}'
+          git config --global user.email '${{ secrets.GH_EMAIL }}'
 
       - name: Open PR on processmaker
         env:
