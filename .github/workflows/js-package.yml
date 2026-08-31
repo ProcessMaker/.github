@@ -20,6 +20,26 @@ on:
         type: string
         required: false
         default: ''
+      branch_map:
+        description: JSON object of repo name to git ref
+        type: string
+        required: false
+        default: ''
+      cascade_stop_before:
+        description: Halt downstream cascade before this repo (upstream bootstrap)
+        type: string
+        required: false
+        default: ''
+      trigger_repo:
+        description: Originating PR repo name
+        type: string
+        required: false
+        default: ''
+      trigger_head_ref:
+        description: Originating PR head branch or SHA
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -36,11 +56,88 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  resolve-stack:
+    name: Resolve JS stack plan
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    outputs:
+      stack-id: ${{ steps.ids.outputs.stack-id }}
+      has_js_stack: ${{ steps.resolve.outputs.has_js_stack }}
+      entry_repo: ${{ steps.resolve.outputs.entry_repo }}
+      cascade_repos: ${{ steps.resolve.outputs.cascade_repos }}
+      branch_map: ${{ steps.resolve.outputs.branch_map }}
+      stop_before: ${{ steps.resolve.outputs.stop_before }}
+      trigger_repo: ${{ steps.resolve.outputs.trigger_repo }}
+      trigger_head_ref: ${{ steps.resolve.outputs.trigger_head_ref }}
+    steps:
+      - name: Resolve stack id
+        id: ids
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.stack_id }}" ]; then
+            sid="${{ inputs.stack_id }}"
+          else
+            sid="${{ github.event.repository.name }}-pr-${{ github.event.pull_request.number }}"
+          fi
+          echo "stack-id=$sid" >> "$GITHUB_OUTPUT"
+          echo "Stack id: $sid"
+
+      - uses: ProcessMaker/.github/.github/actions/js-resolve-stack@main
+        id: resolve
+        with:
+          pr-body: ${{ github.event.pull_request.body }}
+          trigger-repo: ${{ github.event.repository.name }}
+          trigger-head-ref: ${{ github.event.pull_request.head.ref }}
+          base-branch: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+
+  upstream-bootstrap:
+    name: Bootstrap upstream JS packages
+    needs: resolve-stack
+    if: |
+      needs.resolve-stack.outputs.has_js_stack == 'true' &&
+      needs.resolve-stack.outputs.entry_repo != '' &&
+      needs.resolve-stack.outputs.entry_repo != github.event.repository.name
+    runs-on: ubuntu-latest
+    outputs:
+      run-id: ${{ steps.dispatch.outputs.run_id }}
+      repo: ${{ steps.dispatch.outputs.repo }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ProcessMaker/.github
+          path: _pm_github
+
+      - id: dispatch
+        env:
+          STACK_ID: ${{ needs.resolve-stack.outputs.stack-id }}
+          ENTRY_REPO: ${{ needs.resolve-stack.outputs.entry_repo }}
+          BRANCH_MAP: ${{ needs.resolve-stack.outputs.branch_map }}
+          STOP_BEFORE: ${{ needs.resolve-stack.outputs.stop_before }}
+          CASCADE_STOP_BEFORE: ${{ needs.resolve-stack.outputs.stop_before }}
+          TRIGGER_REPO: ${{ needs.resolve-stack.outputs.trigger_repo }}
+          TRIGGER_HEAD_REF: ${{ needs.resolve-stack.outputs.trigger_head_ref }}
+          WRITE_GITHUB_OUTPUT: 'true'
+        run: |
+          set -euo pipefail
+          target="ProcessMaker/${ENTRY_REPO}"
+          branch=$(jq -r --arg r "$ENTRY_REPO" '.[$r] // empty' <<<"$BRANCH_MAP")
+          if [ -z "$branch" ] || ! gh api "repos/${target}/branches/${branch}" >/dev/null 2>&1; then
+            branch=$(gh api "repos/${target}" --jq .default_branch)
+          fi
+          TARGET_REPO="$target" \
+            BRANCH="$branch" \
+            ORIGIN_BRANCH="$branch" \
+            bash _pm_github/.github/scripts/dispatch-js-package.sh
+
   pack:
     name: Pack tarball
+    needs: [resolve-stack, upstream-bootstrap]
     if: |
-      (github.event_name == 'pull_request' && github.event.action != 'closed') ||
-      github.event_name == 'workflow_dispatch'
+      always() &&
+      (needs.resolve-stack.result == 'success' || needs.resolve-stack.result == 'skipped') &&
+      (needs.upstream-bootstrap.result == 'success' || needs.upstream-bootstrap.result == 'skipped') &&
+      ((github.event_name == 'pull_request' && github.event.action != 'closed') ||
+       github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     outputs:
       has-js-downstream: ${{ steps.meta.outputs.has-js-downstream }}
@@ -56,6 +153,8 @@ jobs:
           set -euo pipefail
           if [ -n "${{ inputs.stack_id }}" ]; then
             sid="${{ inputs.stack_id }}"
+          elif [ -n "${{ needs.resolve-stack.outputs.stack-id }}" ]; then
+            sid="${{ needs.resolve-stack.outputs.stack-id }}"
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
             sid="${{ github.event.repository.name }}-pr-${{ github.event.pull_request.number }}"
           else
@@ -66,13 +165,27 @@ jobs:
 
       - name: Resolve checkout ref
         id: ref
+        env:
+          BRANCH_MAP: ${{ needs.resolve-stack.outputs.branch_map || inputs.branch_map }}
+          TRIGGER_REPO: ${{ needs.resolve-stack.outputs.trigger_repo || inputs.trigger_repo }}
+          TRIGGER_HEAD_REF: ${{ needs.resolve-stack.outputs.trigger_head_ref || inputs.trigger_head_ref }}
+          ORIGIN_BRANCH: ${{ inputs.origin_branch }}
         run: |
           set -euo pipefail
+          repo_name="${GITHUB_REPOSITORY##*/}"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             echo "ref=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          branch="${{ inputs.origin_branch }}"
+          branch=""
+          if [ -n "$TRIGGER_REPO" ] && [ "$repo_name" = "$TRIGGER_REPO" ] && [ -n "$TRIGGER_HEAD_REF" ]; then
+            branch="$TRIGGER_HEAD_REF"
+          elif [ -n "$BRANCH_MAP" ]; then
+            branch=$(jq -r --arg r "$repo_name" '.[$r] // empty' <<<"$BRANCH_MAP")
+          fi
+          if [ -z "$branch" ]; then
+            branch="$ORIGIN_BRANCH"
+          fi
           if [ -z "$branch" ]; then
             echo "ref=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
             exit 0
@@ -90,11 +203,11 @@ jobs:
           fetch-depth: 0
 
       - name: Download upstream stack
-        if: inputs.source_run_id != ''
+        if: ${{ (needs.upstream-bootstrap.outputs.run-id || inputs.source_run_id) != '' }}
         uses: ProcessMaker/.github/.github/actions/js-download-stack@main
         with:
-          source-repo: ${{ inputs.source_repo }}
-          source-run-id: ${{ inputs.source_run_id }}
+          source-repo: ${{ needs.upstream-bootstrap.outputs.repo || inputs.source_repo }}
+          source-run-id: ${{ needs.upstream-bootstrap.outputs.run-id || inputs.source_run_id }}
           dest: js-stack
 
       - uses: ProcessMaker/.github/.github/actions/js-pack@main
@@ -116,69 +229,76 @@ jobs:
 
   cascade-pr:
     name: Cascade PR rebuild
-    needs: pack
-    if: needs.pack.result == 'success' && needs.pack.outputs.has-js-downstream == 'true'
+    needs: [pack, resolve-stack]
+    if: |
+      always() &&
+      needs.pack.result == 'success' &&
+      (needs.resolve-stack.result == 'success' || needs.resolve-stack.result == 'skipped') &&
+      needs.pack.outputs.has-js-downstream == 'true'
     runs-on: ubuntu-latest
     outputs:
       final-repo: ${{ steps.cascade.outputs.final-repo }}
       final-run-id: ${{ steps.cascade.outputs.final-run-id }}
+      did-cascade: ${{ steps.cascade.outputs.did-cascade }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ProcessMaker/.github
+          path: _pm_github
+
       - id: cascade
         env:
           JS_REPOS: ${{ needs.pack.outputs.js-repos }}
           STACK_ID: ${{ needs.pack.outputs.stack-id }}
           SOURCE_REPO: ${{ github.repository }}
           SOURCE_RUN_ID: ${{ github.run_id }}
-          ORIGIN_BRANCH: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+          ORIGIN_BRANCH: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch || inputs.origin_branch }}
+          BRANCH_MAP: ${{ needs.resolve-stack.outputs.branch_map || inputs.branch_map }}
+          STOP_BEFORE: ${{ needs.resolve-stack.outputs.stop_before || inputs.cascade_stop_before }}
+          CASCADE_STOP_BEFORE: ${{ needs.resolve-stack.outputs.stop_before || inputs.cascade_stop_before }}
+          TRIGGER_REPO: ${{ needs.resolve-stack.outputs.trigger_repo || inputs.trigger_repo }}
+          TRIGGER_HEAD_REF: ${{ needs.resolve-stack.outputs.trigger_head_ref || inputs.trigger_head_ref }}
         run: |
           set -euo pipefail
           source_repo="$SOURCE_REPO"
           source_run_id="$SOURCE_RUN_ID"
           final_repo="$source_repo"
           final_run_id="$source_run_id"
+          did_cascade=false
 
           mapfile -t repos < <(jq -r '.[]' <<<"$JS_REPOS")
           for repo in "${repos[@]}"; do
+            if [ -n "$STOP_BEFORE" ] && [ "$repo" = "$STOP_BEFORE" ]; then
+              echo "Stopping cascade before ${repo}"
+              break
+            fi
             target="ProcessMaker/${repo}"
             branch="$ORIGIN_BRANCH"
-            if ! gh api "repos/${target}/branches/${branch}" >/dev/null 2>&1; then
+            if [ -n "$BRANCH_MAP" ]; then
+              mapped=$(jq -r --arg r "$repo" '.[$r] // empty' <<<"$BRANCH_MAP")
+              if [ -n "$mapped" ]; then
+                branch="$mapped"
+              fi
+            fi
+            if [ -z "$branch" ] || ! gh api "repos/${target}/branches/${branch}" >/dev/null 2>&1; then
               branch=$(gh api "repos/${target}" --jq .default_branch)
             fi
-            echo "Dispatching ${target} on ${branch} (stack ${STACK_ID})"
-            gh workflow run js-package.yml \
-              --repo "$target" \
-              --ref "$branch" \
-              -f "stack_id=${STACK_ID}" \
-              -f "source_repo=${source_repo}" \
-              -f "source_run_id=${source_run_id}" \
-              -f "origin_branch=${branch}"
-
-            run_id=""
-            for _ in $(seq 1 36); do
-              sleep 5
-              gh run list --repo "$target" --workflow js-package.yml --event workflow_dispatch --limit 10 \
-                --json databaseId,displayTitle,createdAt > /tmp/runs.json
-              run_id=$(jq -r --arg sid "$STACK_ID" '
-                map(select(.displayTitle | contains($sid))) | sort_by(.createdAt) | reverse | .[0].databaseId // empty
-              ' /tmp/runs.json)
-              if [ -n "$run_id" ]; then
-                break
-              fi
-            done
-            if [ -z "$run_id" ]; then
-              echo "::error::Timed out waiting for ${target} workflow to start"
-              exit 1
-            fi
-            echo "Watching ${target} run ${run_id}"
-            gh run watch "$run_id" --repo "$target" --exit-status
-            source_repo="$target"
-            source_run_id="$run_id"
-            final_repo="$target"
-            final_run_id="$run_id"
+            TARGET_REPO="$target" \
+              BRANCH="$branch" \
+              ORIGIN_BRANCH="$branch" \
+              SOURCE_REPO="$source_repo" \
+              SOURCE_RUN_ID="$source_run_id" \
+              bash _pm_github/.github/scripts/dispatch-js-package.sh
+            source_repo=$(cat /tmp/js-dispatch-repo)
+            source_run_id=$(cat /tmp/js-dispatch-run-id)
+            final_repo="$source_repo"
+            final_run_id="$source_run_id"
+            did_cascade=true
           done
 
           echo "final-repo=$final_repo" >> "$GITHUB_OUTPUT"
           echo "final-run-id=$final_run_id" >> "$GITHUB_OUTPUT"
+          echo "did-cascade=$did_cascade" >> "$GITHUB_OUTPUT"
 
   merge-stack:
     name: Merge complete JS stack
@@ -187,7 +307,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download complete stack from downstream
-        if: needs.cascade-pr.result == 'success'
+        if: needs.cascade-pr.result == 'success' && needs.cascade-pr.outputs.did-cascade == 'true'
         uses: ProcessMaker/.github/.github/actions/js-download-stack@main
         with:
           source-repo: ${{ needs.cascade-pr.outputs.final-repo }}
@@ -195,7 +315,7 @@ jobs:
           dest: js-stack
 
       - name: Download this run's stack
-        if: needs.cascade-pr.result != 'success'
+        if: needs.cascade-pr.result != 'success' || needs.cascade-pr.outputs.did-cascade != 'true'
         uses: actions/download-artifact@v4
         with:
           name: js-stack
