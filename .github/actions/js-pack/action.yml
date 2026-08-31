@@ -66,6 +66,7 @@ runs:
         sha=$(git rev-parse --short HEAD)
 
         if [ -f stack.json ] && [ "$(jq -r '.packages | length' stack.json)" != "0" ]; then
+          cp package.json package.json.pre-pin
           while IFS= read -r npm_name; do
             tarball=$(jq -r --arg p "$npm_name" '.packages[$p].tarball' stack.json)
             if [ -z "$tarball" ] || [ "$tarball" = "null" ]; then
@@ -89,6 +90,13 @@ runs:
 
         if [ -n "$command" ]; then
           npm run "$command"
+        fi
+
+        # Restore published dependency versions before pack. file:./deps pins are
+        # only valid in this workspace; packing them makes nested installs look
+        # for tarballs next to the unpacked package (e.g. node_modules/@processmaker/modeler/deps/).
+        if [ -f package.json.pre-pin ]; then
+          mv package.json.pre-pin package.json
         fi
 
         tarball=$(npm pack --json | jq -r '.[0].filename // empty')
