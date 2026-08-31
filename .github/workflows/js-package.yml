@@ -51,10 +51,6 @@ permissions:
 env:
   GH_TOKEN: ${{ secrets.GIT_TOKEN }}
 
-concurrency:
-  group: js-package-${{ github.repository }}-${{ inputs.stack_id || github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
   resolve-stack:
     name: Resolve JS stack plan
@@ -341,12 +337,15 @@ jobs:
     with:
       js_source_repo: ${{ github.repository }}
       js_source_run_id: ${{ github.run_id }}
+      cicd_operation: deploy
     secrets: inherit
 
   deploy-closed:
     name: Delete CICD instance
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
     uses: processmaker/.github/.github/workflows/deploy-pm4.yml@main
+    with:
+      cicd_operation: delete
     secrets: inherit
 
   publish:

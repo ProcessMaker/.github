@@ -28,6 +28,11 @@ on:
         required: false
         type: string
         default: ''
+      cicd_operation:
+        description: Concurrency slot — deploy or delete. Keeps skipped delete jobs from blocking deploy.
+        required: false
+        type: string
+        default: ''
 env:
   aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
   aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -55,8 +60,8 @@ env:
   PMAI_HOST: ${{ contains(github.event.pull_request.body, 'ci:pmai_dev') && 'pmai-svc.pmai-system-dev.svc.cluster.local' || 'pmai-svc.pmai-system.svc.cluster.local' }}
   PMAI_HOST_WS: ${{ contains(github.event.pull_request.body, 'ci:pmai_dev') && 'pmai-dev-ws.engk8s.processmaker.net' || 'pmai-ws.engk8s.processmaker.net' }}
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.cicd_operation || ((github.event.action == 'closed' || inputs.delete != '') && 'delete' || 'deploy') }}
+  cancel-in-progress: ${{ inputs.cicd_operation != 'delete' && github.event.action != 'closed' && inputs.delete == '' }}
 jobs:
   js-stack:
     name: Build JS stack from CI tags
