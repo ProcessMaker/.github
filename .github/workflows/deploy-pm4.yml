@@ -12,6 +12,22 @@ on:
         required: false
         default: ''
   workflow_call:
+    inputs:
+      delete:
+        description: 'CI Instance ID to delete. If present, all other jobs will be skipped.'
+        required: false
+        type: string
+        default: ''
+      js_source_repo:
+        description: owner/repo that uploaded the js-stack artifact
+        required: false
+        type: string
+        default: ''
+      js_source_run_id:
+        description: Workflow run id that uploaded the js-stack artifact
+        required: false
+        type: string
+        default: ''
 env:
   aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
   aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -62,6 +78,19 @@ jobs:
         uses: ./.github/actions/common
         with:
           token: ${{ secrets.GIT_TOKEN }}
+
+      - uses: ./.github/actions/setup-github-app-git
+        if: inputs.js_source_run_id != ''
+        with:
+          private-key: ${{ secrets.PM_CICD_APP_PRIVATE_KEY }}
+
+      - name: Download JS stack tarballs
+        if: inputs.js_source_run_id != ''
+        uses: ./.github/actions/js-download-stack
+        with:
+          source-repo: ${{ inputs.js_source_repo }}
+          source-run-id: ${{ inputs.js_source_run_id }}
+          dest: pm4-k8s-distribution/images/js-deps
 
       - name: Set image name
         run: |

@@ -1,0 +1,55 @@
+name: Read processmaker.build.downstream
+description: Read cascade targets from this repo's package.json
+
+outputs:
+  js-repos:
+    description: JSON array of GitHub repo names that are JS packages (not processmaker)
+    value: ${{ steps.read.outputs.js-repos }}
+  has-js-downstream:
+    description: 'true if there is at least one JS downstream package'
+    value: ${{ steps.read.outputs.has-js-downstream }}
+  has-processmaker:
+    description: 'true if processmaker is listed as downstream'
+    value: ${{ steps.read.outputs.has-processmaker }}
+  command:
+    description: npm build script name, empty if none
+    value: ${{ steps.read.outputs.command }}
+  package-name:
+    description: npm package name from package.json
+    value: ${{ steps.read.outputs.package-name }}
+  version:
+    description: version from package.json
+    value: ${{ steps.read.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - id: read
+      shell: bash
+      run: |
+        set -euo pipefail
+        pkg="${GITHUB_WORKSPACE}/package.json"
+        if [ ! -f "$pkg" ]; then
+          echo "::error::package.json not found in $GITHUB_WORKSPACE"
+          exit 1
+        fi
+
+        name=$(jq -r '.name' "$pkg")
+        version=$(jq -r '.version' "$pkg")
+        command=$(jq -r '.processmaker.build.command // empty' "$pkg")
+        downstream=$(jq -c '.processmaker.build.downstream // []' "$pkg")
+        js_repos=$(jq -c '[.[] | select(. != "processmaker")]' <<<"$downstream")
+        has_js=$(jq -r 'length > 0' <<<"$js_repos")
+        has_pm=$(jq -r 'index("processmaker") != null' <<<"$downstream")
+
+        echo "package-name=$name" >> "$GITHUB_OUTPUT"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        echo "command=$command" >> "$GITHUB_OUTPUT"
+        echo "has-js-downstream=$has_js" >> "$GITHUB_OUTPUT"
+        echo "has-processmaker=$has_pm" >> "$GITHUB_OUTPUT"
+        {
+          echo "js-repos<<EOF"
+          echo "$js_repos"
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+        echo "Downstream JS: $js_repos (processmaker=$has_pm, command=${command:-none})"

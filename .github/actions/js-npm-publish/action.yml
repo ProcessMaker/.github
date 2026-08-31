@@ -1,0 +1,57 @@
+name: Publish package to npmjs
+description: Build (if configured) and npm publish with provenance; skip if the version already exists
+
+inputs:
+  node-version:
+    description: Node.js version
+    required: false
+    default: '20'
+  npm-token:
+    description: Optional classic npm token; Trusted Publishing (OIDC) is preferred
+    required: false
+    default: ''
+
+outputs:
+  published:
+    description: 'true if npm publish ran'
+    value: ${{ steps.publish.outputs.published }}
+  version:
+    description: Published version
+    value: ${{ steps.publish.outputs.version }}
+  package-name:
+    description: npm package name
+    value: ${{ steps.publish.outputs.package-name }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        registry-url: https://registry.npmjs.org
+
+    - id: publish
+      shell: bash
+      env:
+        NODE_AUTH_TOKEN: ${{ inputs.npm-token }}
+      run: |
+        set -euo pipefail
+        name=$(jq -r '.name' package.json)
+        version=$(jq -r '.version' package.json)
+        command=$(jq -r '.processmaker.build.command // empty' package.json)
+        echo "package-name=$name" >> "$GITHUB_OUTPUT"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+        if npm view "${name}@${version}" version >/dev/null 2>&1; then
+          echo "${name}@${version} is already on the registry; skipping publish"
+          echo "published=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        npm ci
+        if [ -n "$command" ]; then
+          npm run "$command"
+        fi
+
+        npm publish --provenance --access public
+        echo "published=true" >> "$GITHUB_OUTPUT"

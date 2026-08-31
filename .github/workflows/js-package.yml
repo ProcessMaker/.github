@@ -1,0 +1,390 @@
+name: js-package
+run-name: js-stack ${{ inputs.stack_id || github.event.pull_request.number || github.run_id }}
+
+on:
+  workflow_call:
+    inputs:
+      stack_id:
+        type: string
+        required: false
+        default: ''
+      source_repo:
+        type: string
+        required: false
+        default: ''
+      source_run_id:
+        type: string
+        required: false
+        default: ''
+      origin_branch:
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  id-token: write
+  pull-requests: write
+  actions: write
+  packages: write
+
+concurrency:
+  group: js-package-${{ github.repository }}-${{ inputs.stack_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  pack:
+    name: Pack tarball
+    if: |
+      (github.event_name == 'pull_request' && github.event.action != 'closed') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      has-js-downstream: ${{ steps.meta.outputs.has-js-downstream }}
+      has-processmaker: ${{ steps.meta.outputs.has-processmaker }}
+      js-repos: ${{ steps.meta.outputs.js-repos }}
+      package-name: ${{ steps.meta.outputs.package-name }}
+      version: ${{ steps.meta.outputs.version }}
+      stack-id: ${{ steps.ids.outputs.stack-id }}
+    steps:
+      - name: Resolve stack id
+        id: ids
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.stack_id }}" ]; then
+            sid="${{ inputs.stack_id }}"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            sid="${{ github.event.repository.name }}-pr-${{ github.event.pull_request.number }}"
+          else
+            sid="${{ github.event.repository.name }}-${{ github.run_id }}"
+          fi
+          echo "stack-id=$sid" >> "$GITHUB_OUTPUT"
+          echo "Stack id: $sid"
+
+      - name: Resolve checkout ref
+        id: ref
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "ref=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          branch="${{ inputs.origin_branch }}"
+          if [ -z "$branch" ]; then
+            echo "ref=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git ls-remote --exit-code --heads "https://github.com/${{ github.repository }}.git" "$branch" >/dev/null; then
+            echo "ref=$branch" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${{ github.event.repository.default_branch }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.ref.outputs.ref }}
+          fetch-depth: 0
+
+      - uses: ProcessMaker/.github/.github/actions/setup-github-app-git@main
+        if: inputs.source_run_id != ''
+        with:
+          private-key: ${{ secrets.PM_CICD_APP_PRIVATE_KEY }}
+
+      - name: Download upstream stack
+        if: inputs.source_run_id != ''
+        uses: ProcessMaker/.github/.github/actions/js-download-stack@main
+        with:
+          source-repo: ${{ inputs.source_repo }}
+          source-run-id: ${{ inputs.source_run_id }}
+          dest: js-stack
+
+      - uses: ProcessMaker/.github/.github/actions/js-pack@main
+        with:
+          stack-dir: js-stack
+          stack-id: ${{ steps.ids.outputs.stack-id }}
+          origin-repo: ${{ github.event_name == 'workflow_dispatch' && inputs.source_repo || github.repository }}
+          origin-pr: ${{ github.event.pull_request.number }}
+          origin-sha: ${{ github.sha }}
+
+      - uses: ProcessMaker/.github/.github/actions/js-next-downstream@main
+        id: meta
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: js-stack
+          path: js-stack/
+          if-no-files-found: error
+
+  cascade-pr:
+    name: Cascade PR rebuild
+    needs: pack
+    if: needs.pack.result == 'success' && needs.pack.outputs.has-js-downstream == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      final-repo: ${{ steps.cascade.outputs.final-repo }}
+      final-run-id: ${{ steps.cascade.outputs.final-run-id }}
+    steps:
+      - uses: ProcessMaker/.github/.github/actions/setup-github-app-git@main
+        with:
+          private-key: ${{ secrets.PM_CICD_APP_PRIVATE_KEY }}
+
+      - id: cascade
+        env:
+          JS_REPOS: ${{ needs.pack.outputs.js-repos }}
+          STACK_ID: ${{ needs.pack.outputs.stack-id }}
+          SOURCE_REPO: ${{ github.repository }}
+          SOURCE_RUN_ID: ${{ github.run_id }}
+          ORIGIN_BRANCH: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          source_repo="$SOURCE_REPO"
+          source_run_id="$SOURCE_RUN_ID"
+          final_repo="$source_repo"
+          final_run_id="$source_run_id"
+
+          mapfile -t repos < <(jq -r '.[]' <<<"$JS_REPOS")
+          for repo in "${repos[@]}"; do
+            target="ProcessMaker/${repo}"
+            branch="$ORIGIN_BRANCH"
+            if ! gh api "repos/${target}/branches/${branch}" >/dev/null 2>&1; then
+              branch=$(gh api "repos/${target}" --jq .default_branch)
+            fi
+            echo "Dispatching ${target} on ${branch} (stack ${STACK_ID})"
+            gh workflow run js-package.yml \
+              --repo "$target" \
+              --ref "$branch" \
+              -f "stack_id=${STACK_ID}" \
+              -f "source_repo=${source_repo}" \
+              -f "source_run_id=${source_run_id}" \
+              -f "origin_branch=${branch}"
+
+            run_id=""
+            for _ in $(seq 1 36); do
+              sleep 5
+              gh run list --repo "$target" --workflow js-package.yml --event workflow_dispatch --limit 10 \
+                --json databaseId,displayTitle,createdAt > /tmp/runs.json
+              run_id=$(jq -r --arg sid "$STACK_ID" '
+                map(select(.displayTitle | contains($sid))) | sort_by(.createdAt) | reverse | .[0].databaseId // empty
+              ' /tmp/runs.json)
+              if [ -n "$run_id" ]; then
+                break
+              fi
+            done
+            if [ -z "$run_id" ]; then
+              echo "::error::Timed out waiting for ${target} workflow to start"
+              exit 1
+            fi
+            echo "Watching ${target} run ${run_id}"
+            gh run watch "$run_id" --repo "$target" --exit-status
+            source_repo="$target"
+            source_run_id="$run_id"
+            final_repo="$target"
+            final_run_id="$run_id"
+          done
+
+          echo "final-repo=$final_repo" >> "$GITHUB_OUTPUT"
+          echo "final-run-id=$final_run_id" >> "$GITHUB_OUTPUT"
+
+  merge-stack:
+    name: Merge complete JS stack
+    needs: [pack, cascade-pr]
+    if: always() && needs.pack.result == 'success' && (needs.cascade-pr.result == 'success' || needs.cascade-pr.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ProcessMaker/.github/.github/actions/setup-github-app-git@main
+        if: needs.cascade-pr.result == 'success'
+        with:
+          private-key: ${{ secrets.PM_CICD_APP_PRIVATE_KEY }}
+
+      - name: Download complete stack from downstream
+        if: needs.cascade-pr.result == 'success'
+        uses: ProcessMaker/.github/.github/actions/js-download-stack@main
+        with:
+          source-repo: ${{ needs.cascade-pr.outputs.final-repo }}
+          source-run-id: ${{ needs.cascade-pr.outputs.final-run-id }}
+          dest: js-stack
+
+      - name: Download this run's stack
+        if: needs.cascade-pr.result != 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: js-stack
+          path: js-stack
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: js-stack
+          path: js-stack/
+          overwrite: true
+
+  deploy:
+    name: Deploy CICD image
+    needs: [pack, cascade-pr, merge-stack]
+    if: |
+      always() &&
+      needs.pack.result == 'success' &&
+      (needs.cascade-pr.result == 'success' || needs.cascade-pr.result == 'skipped') &&
+      needs.merge-stack.result == 'success' &&
+      github.event_name == 'pull_request' &&
+      github.event.action != 'closed'
+    uses: processmaker/.github/.github/workflows/deploy-pm4.yml@main
+    with:
+      js_source_repo: ${{ github.repository }}
+      js_source_run_id: ${{ github.run_id }}
+    secrets: inherit
+
+  deploy-closed:
+    name: Delete CICD instance
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    uses: processmaker/.github/.github/workflows/deploy-pm4.yml@main
+    secrets: inherit
+
+  publish:
+    name: Publish to npmjs
+    if: github.event_name == 'release' && github.event.action == 'published'
+    runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.pub.outputs.published }}
+      version: ${{ steps.pub.outputs.version }}
+      package-name: ${{ steps.pub.outputs.package-name }}
+      has-js-downstream: ${{ steps.meta.outputs.has-js-downstream }}
+      has-processmaker: ${{ steps.meta.outputs.has-processmaker }}
+      js-repos: ${{ steps.meta.outputs.js-repos }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: ProcessMaker/.github/.github/actions/js-next-downstream@main
+        id: meta
+
+      - uses: ProcessMaker/.github/.github/actions/js-npm-publish@main
+        id: pub
+        with:
+          npm-token: ${{ secrets.NPM_TOKEN }}
+
+  cascade-release:
+    name: Cascade GitHub Release
+    needs: publish
+    if: needs.publish.result == 'success' && needs.publish.outputs.published == 'true' && needs.publish.outputs.has-js-downstream == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ProcessMaker/.github/.github/actions/setup-github-app-git@main
+        with:
+          private-key: ${{ secrets.PM_CICD_APP_PRIVATE_KEY }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Release downstream JS packages
+        env:
+          JS_REPOS: ${{ needs.publish.outputs.js-repos }}
+          UPSTREAM_NPM: ${{ needs.publish.outputs.package-name }}
+          UPSTREAM_VERSION: ${{ needs.publish.outputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.release.target_commitish || github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          mapfile -t repos < <(jq -r '.[]' <<<"$JS_REPOS")
+          for repo in "${repos[@]}"; do
+            target="ProcessMaker/${repo}"
+            rm -rf /tmp/ds
+            git clone --depth 50 "https://x-access-token:${GH_TOKEN}@github.com/${target}.git" /tmp/ds
+            cd /tmp/ds
+            branch="$DEFAULT_BRANCH"
+            if git fetch origin "$branch" && git checkout -B "$branch" "origin/${branch}"; then
+              true
+            else
+              branch=$(gh api "repos/${target}" --jq .default_branch)
+              git fetch origin "$branch"
+              git checkout -B "$branch" "origin/${branch}"
+            fi
+
+            current=$(jq -r --arg n "$UPSTREAM_NPM" '
+              .dependencies[$n] // .devDependencies[$n] // .optionalDependencies[$n] // empty
+            ' package.json)
+            stripped=$(echo "$current" | sed 's/^[^0-9]*//')
+            if [ "$stripped" = "$UPSTREAM_VERSION" ]; then
+              echo "${target} already depends on ${UPSTREAM_NPM}@${UPSTREAM_VERSION}; skipping"
+              cd /
+              rm -rf /tmp/ds
+              continue
+            fi
+
+            npm install --save-exact "${UPSTREAM_NPM}@${UPSTREAM_VERSION}"
+            git add package.json package-lock.json
+            git commit -m "chore: bump ${UPSTREAM_NPM} to ${UPSTREAM_VERSION}"
+            npm version patch -m "chore: release %s"
+            git push origin HEAD
+            git push origin --tags
+            new_tag=$(git describe --tags --abbrev=0)
+            gh release create "$new_tag" --repo "$target" --target "$branch" \
+              --title "$new_tag" \
+              --notes "Automated cascade from ${UPSTREAM_NPM}@${UPSTREAM_VERSION}"
+            cd /
+            rm -rf /tmp/ds
+          done
+
+  processmaker-pr:
+    name: Open processmaker JS bump PR
+    needs: publish
+    if: needs.publish.result == 'success' && needs.publish.outputs.published == 'true' && needs.publish.outputs.has-processmaker == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          path: released
+
+      - uses: ProcessMaker/.github/.github/actions/setup-github-app-git@main
+        with:
+          private-key: ${{ secrets.PM_CICD_APP_PRIVATE_KEY }}
+          repositories: processmaker
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Open PR on processmaker
+        env:
+          UPSTREAM_NPM: ${{ needs.publish.outputs.package-name }}
+          UPSTREAM_VERSION: ${{ needs.publish.outputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.release.target_commitish || github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/pm
+          git clone --depth 20 "https://x-access-token:${GH_TOKEN}@github.com/ProcessMaker/processmaker.git" /tmp/pm
+          cd /tmp/pm
+          branch="$DEFAULT_BRANCH"
+          if git fetch origin "$branch" && git checkout -B "$branch" "origin/${branch}"; then
+            true
+          else
+            branch=$(gh api repos/ProcessMaker/processmaker --jq .default_branch)
+            git fetch origin "$branch"
+            git checkout -B "$branch" "origin/${branch}"
+          fi
+
+          specs=("${UPSTREAM_NPM}@${UPSTREAM_VERSION}")
+          while IFS= read -r line; do
+            name=$(echo "$line" | awk '{print $1}')
+            ver=$(echo "$line" | awk '{print $2}')
+            in_pm=$(jq -r --arg n "$name" '.dependencies[$n] // empty' package.json)
+            if [ -n "$in_pm" ] && [ "$name" != "$UPSTREAM_NPM" ]; then
+              specs+=("${name}@${ver}")
+            fi
+          done < <(jq -r '.dependencies // {} | to_entries[] | select(.key | startswith("@processmaker/")) | "\(.key) \(.value)"' "$GITHUB_WORKSPACE/released/package.json")
+
+          git checkout -b "chore/js-${UPSTREAM_VERSION}"
+          npm install --save-exact "${specs[@]}"
+          git add package.json package-lock.json
+          if git diff --cached --quiet; then
+            echo "No processmaker JS dependency changes"
+            exit 0
+          fi
+          git commit -m "chore: bump JS packages for ${UPSTREAM_NPM}@${UPSTREAM_VERSION}"
+          git push -u origin HEAD
+          gh pr create --repo ProcessMaker/processmaker \
+            --base "$branch" \
+            --title "chore: bump JS packages (${UPSTREAM_NPM}@${UPSTREAM_VERSION})" \
+            --body "Automated follow-up to the ${UPSTREAM_NPM}@${UPSTREAM_VERSION} release."
