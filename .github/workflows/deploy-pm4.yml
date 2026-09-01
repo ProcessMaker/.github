@@ -12,27 +12,6 @@ on:
         required: false
         default: ''
   workflow_call:
-    inputs:
-      delete:
-        description: 'CI Instance ID to delete. If present, all other jobs will be skipped.'
-        required: false
-        type: string
-        default: ''
-      js_source_repo:
-        description: owner/repo that uploaded the js-stack artifact
-        required: false
-        type: string
-        default: ''
-      js_source_run_id:
-        description: Workflow run id that uploaded the js-stack artifact
-        required: false
-        type: string
-        default: ''
-      cicd_operation:
-        description: Concurrency slot — deploy or delete. Keeps skipped delete jobs from blocking deploy.
-        required: false
-        type: string
-        default: ''
 env:
   aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
   aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -60,83 +39,15 @@ env:
   PMAI_HOST: ${{ contains(github.event.pull_request.body, 'ci:pmai_dev') && 'pmai-svc.pmai-system-dev.svc.cluster.local' || 'pmai-svc.pmai-system.svc.cluster.local' }}
   PMAI_HOST_WS: ${{ contains(github.event.pull_request.body, 'ci:pmai_dev') && 'pmai-dev-ws.engk8s.processmaker.net' || 'pmai-ws.engk8s.processmaker.net' }}
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.cicd_operation || ((github.event.action == 'closed' || inputs.delete != '') && 'delete' || 'deploy') }}
-  cancel-in-progress: ${{ inputs.cicd_operation != 'delete' && github.event.action != 'closed' && inputs.delete == '' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
-  js-stack:
-    name: Build JS stack from CI tags
-    if: |
-      github.event.action != 'closed' &&
-      inputs.delete == '' &&
-      inputs.js_source_run_id == ''
-    runs-on: ubuntu-latest
-    outputs:
-      built: ${{ steps.flag.outputs.built }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          repository: processmaker/.github
-
-      - uses: ./.github/actions/setup-github-app-git
-        with:
-          private-key: ${{ secrets.PM_CICD_APP_PRIVATE_KEY }}
-
-      - uses: ./.github/actions/js-resolve-stack
-        id: resolve
-        with:
-          pr-body: ${{ github.event.pull_request.body }}
-          trigger-repo: ${{ github.event.repository.name }}
-          trigger-head-ref: ${{ github.event.pull_request.head.ref }}
-          base-branch: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
-
-      - id: flag
-        run: echo "built=${{ steps.resolve.outputs.has_js_stack }}" >> "$GITHUB_OUTPUT"
-
-      - name: Dispatch JS cascade
-        id: dispatch
-        if: steps.resolve.outputs.has_js_stack == 'true'
-        env:
-          STACK_ID: ${{ github.event.repository.name }}-pr-${{ github.event.pull_request.number || github.run_id }}
-          ENTRY_REPO: ${{ steps.resolve.outputs.entry_repo }}
-          BRANCH_MAP: ${{ steps.resolve.outputs.branch_map }}
-          TRIGGER_REPO: ${{ steps.resolve.outputs.trigger_repo }}
-          TRIGGER_HEAD_REF: ${{ steps.resolve.outputs.trigger_head_ref }}
-          WRITE_GITHUB_OUTPUT: 'true'
-        run: |
-          set -euo pipefail
-          target="ProcessMaker/${ENTRY_REPO}"
-          branch=$(jq -r --arg r "$ENTRY_REPO" '.[$r] // empty' <<<"$BRANCH_MAP")
-          if [ -z "$branch" ] || ! gh api "repos/${target}/branches/${branch}" >/dev/null 2>&1; then
-            branch=$(gh api "repos/${target}" --jq .default_branch)
-          fi
-          TARGET_REPO="$target" \
-            BRANCH="$branch" \
-            ORIGIN_BRANCH="$branch" \
-            bash .github/scripts/dispatch-js-package.sh
-
-      - name: Download JS stack from cascade
-        if: steps.resolve.outputs.has_js_stack == 'true'
-        uses: ./.github/actions/js-download-stack
-        with:
-          source-repo: ${{ steps.dispatch.outputs.repo }}
-          source-run-id: ${{ steps.dispatch.outputs.run_id }}
-          dest: js-stack
-
-      - name: Upload JS stack for image build
-        if: steps.resolve.outputs.has_js_stack == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: js-stack
-          path: js-stack/
-          if-no-files-found: error
-
   imageEKS:
     name: build-docker-image-EKS
-    needs: [deleteEKS, js-stack]
+    needs: [deleteEKS]
     if: |
       !cancelled() &&
       (needs.deleteEKS.result == 'success' || needs.deleteEKS.result == 'skipped') &&
-      (needs.js-stack.result == 'success' || needs.js-stack.result == 'skipped') &&
       github.event.action != 'closed' &&
       inputs.delete == ''
     runs-on: ${{ vars.RUNNER }}
@@ -151,26 +62,6 @@ jobs:
         uses: ./.github/actions/common
         with:
           token: ${{ secrets.GIT_TOKEN }}
-
-      - uses: ./.github/actions/setup-github-app-git
-        if: inputs.js_source_run_id != ''
-        with:
-          private-key: ${{ secrets.PM_CICD_APP_PRIVATE_KEY }}
-
-      - name: Download JS stack tarballs
-        if: inputs.js_source_run_id != ''
-        uses: ./.github/actions/js-download-stack
-        with:
-          source-repo: ${{ inputs.js_source_repo }}
-          source-run-id: ${{ inputs.js_source_run_id }}
-          dest: pm4-k8s-distribution/images/js-deps
-
-      - name: Download JS stack tarballs from this workflow
-        if: needs.js-stack.outputs.built == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: js-stack
-          path: pm4-k8s-distribution/images/js-deps
 
       - name: Set image name
         run: |

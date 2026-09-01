@@ -1,7 +1,0 @@
-{
-  "vue-multiselect": ["vue-form-elements"],
-  "vue-form-elements": ["screen-builder"],
-  "screen-builder": ["modeler"],
-  "processmaker-bpmn-moddle": ["modeler"],
-  "modeler": []
-}
