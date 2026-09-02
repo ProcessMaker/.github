@@ -24,7 +24,7 @@ on:
         type: string
         default: ''
       pr_body:
-        description: PR body text to parse ci: tags from
+        description: 'PR body text to parse ci: tags from'
         required: false
         type: string
         default: ''
