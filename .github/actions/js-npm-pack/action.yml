@@ -1,0 +1,67 @@
+name: npm pack
+description: Install dependencies, optionally build, and create an npm tarball
+
+inputs:
+  build-command:
+    description: npm script to run before pack; auto-detected from package.json when empty
+    required: false
+    default: ''
+  node-version:
+    description: Node.js version
+    required: false
+    default: '20'
+
+outputs:
+  tarball:
+    description: Packed tarball filename
+    value: ${{ steps.pack.outputs.tarball }}
+  package-name:
+    description: npm package name from package.json
+    value: ${{ steps.pack.outputs.package-name }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: npm
+
+    - id: pack
+      shell: bash
+      env:
+        INPUT_BUILD_COMMAND: ${{ inputs.build-command }}
+      run: |
+        set -euo pipefail
+
+        command="$INPUT_BUILD_COMMAND"
+        if [ -z "$command" ]; then
+          command=$(jq -r '.processmaker.build.command // empty' package.json)
+        fi
+        if [ -z "$command" ] || [ "$command" = "null" ]; then
+          if jq -e '.scripts["build-bundle"]' package.json >/dev/null; then
+            command="build-bundle"
+          elif jq -e '.scripts["build"]' package.json >/dev/null; then
+            command="build"
+          fi
+        fi
+
+        npm ci
+
+        if [ -n "$command" ]; then
+          npm run "$command"
+        fi
+
+        pkg_name=$(jq -r '.name' package.json)
+        tarball=$(npm pack --json | jq -r '.[0].filename // empty')
+        if [ -z "$tarball" ]; then
+          tarball=$(npm pack | tail -n 1)
+        fi
+        if [ -z "$tarball" ] || [ ! -f "$tarball" ]; then
+          echo "::error::npm pack did not produce a tarball"
+          exit 1
+        fi
+
+        echo "Packed $tarball ($pkg_name)"
+        echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+        echo "package-name=$pkg_name" >> "$GITHUB_OUTPUT"
