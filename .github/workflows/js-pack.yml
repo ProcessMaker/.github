@@ -1,0 +1,74 @@
+name: js-pack
+
+on:
+  workflow_call:
+    inputs:
+      repository:
+        description: GitHub repository to build (owner/name)
+        required: true
+        type: string
+      ref:
+        description: Branch, tag, or SHA (target repo default branch if empty)
+        required: false
+        type: string
+        default: ''
+      build-command:
+        description: npm script to run before pack; auto-detected when empty
+        required: false
+        type: string
+        default: ''
+      artifact-name:
+        description: GitHub Actions artifact name
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve ref
+        id: ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ref='${{ inputs.ref }}'
+          if [ -z "$ref" ]; then
+            ref=$(gh api "repos/${{ inputs.repository }}" --jq .default_branch)
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "Checking out ${{ inputs.repository }} at $ref"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ steps.ref.outputs.ref }}
+
+      - name: Pack
+        id: pack
+        uses: ./.github/actions/js-npm-pack
+        with:
+          build-command: ${{ inputs.build-command }}
+
+      - name: Resolve artifact name
+        id: artifact
+        run: |
+          set -euo pipefail
+          name='${{ inputs.artifact-name }}'
+          if [ -z "$name" ]; then
+            safe=$(echo '${{ steps.pack.outputs.package-name }}' | tr '/:@' '-')
+            name="npm-pack-${safe}-${{ github.run_id }}"
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: ${{ steps.pack.outputs.tarball }}
+          if-no-files-found: error
