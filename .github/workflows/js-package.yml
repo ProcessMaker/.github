@@ -1,0 +1,124 @@
+name: js-package
+
+on:
+  workflow_call:
+    inputs:
+      branch_map:
+        description: JSON object mapping repo short name to git ref
+        required: false
+        type: string
+        default: '{}'
+      trigger_repo:
+        description: Originating repo short name (e.g. screen-builder)
+        required: false
+        type: string
+        default: ''
+      trigger_ref:
+        description: Git ref for the originating repo
+        required: false
+        type: string
+        default: ''
+      stack_id:
+        description: Unique id for artifact grouping
+        required: false
+        type: string
+        default: ''
+      pr_body:
+        description: PR body text to parse ci: tags from
+        required: false
+        type: string
+        default: ''
+    outputs:
+      needs_stack:
+        description: Whether any JS packages were built
+        value: ${{ jobs.build-stack.outputs.needs_stack }}
+      package_count:
+        description: Number of packages in the stack manifest
+        value: ${{ jobs.build-stack.outputs.package_count }}
+
+permissions:
+  contents: read
+
+jobs:
+  build-stack:
+    runs-on: ubuntu-latest
+    outputs:
+      needs_stack: ${{ steps.build.outputs.needs_stack }}
+      package_count: ${{ steps.build.outputs.package_count }}
+    steps:
+      - name: Checkout .github
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install gh CLI
+        run: |
+          type gh >/dev/null 2>&1 || {
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+            sudo apt update && sudo apt install -y gh
+          }
+
+      - name: Resolve branch map
+        id: branches
+        env:
+          GH_TOKEN: ${{ secrets.GIT_TOKEN || github.token }}
+          INPUT_BRANCH_MAP: ${{ inputs.branch_map }}
+          INPUT_PR_BODY: ${{ inputs.pr_body }}
+          TRIGGER_REPO: ${{ inputs.trigger_repo }}
+          TRIGGER_REF: ${{ inputs.trigger_ref }}
+          CI_PROJECT: ${{ inputs.trigger_repo }}
+          CI_PACKAGE_BRANCH: ${{ inputs.trigger_ref }}
+        run: |
+          set -euo pipefail
+
+          # Parse ci:<repo>:<branch> tags from PR body
+          ci_map='{}'
+          if [[ -n "$INPUT_PR_BODY" ]]; then
+            ci_map=$(echo "$INPUT_PR_BODY" | grep -oE 'ci:[^[:space:]]+:[^[:space:]]+' | while read -r tag; do
+              repo=$(echo "$tag" | cut -d: -f2)
+              branch=$(echo "$tag" | cut -d: -f3-)
+              echo "\"$repo\": \"$branch\""
+            done | jq -s 'from_entries' 2>/dev/null || echo '{}')
+          fi
+
+          # Merge with explicit branch_map input
+          merged=$(echo "$INPUT_BRANCH_MAP" "$ci_map" | jq -s 'add')
+
+          # Add trigger repo if set
+          if [[ -n "$TRIGGER_REPO" && -n "$TRIGGER_REF" ]]; then
+            merged=$(echo "$merged" | jq --arg r "$TRIGGER_REPO" --arg ref "$TRIGGER_REF" '. + {($r): $ref}')
+          fi
+
+          echo "branch_map=$(echo "$merged" | jq -c .)" >> "$GITHUB_OUTPUT"
+          echo "Resolved branch map: $(echo "$merged" | jq .)"
+
+      - name: Build JS stack
+        id: build
+        env:
+          GH_TOKEN: ${{ secrets.GIT_TOKEN || github.token }}
+          BRANCH_MAP: ${{ steps.branches.outputs.branch_map }}
+          TRIGGER_REPO: ${{ inputs.trigger_repo }}
+          TRIGGER_REF: ${{ inputs.trigger_ref }}
+          STACK_DIR: js-stack
+        run: |
+          set -euo pipefail
+          bash .github/scripts/js-stack-build.sh
+
+          count=$(jq 'length' js-stack/manifest.json)
+          echo "package_count=$count" >> "$GITHUB_OUTPUT"
+          if [[ "$count" -eq 0 ]]; then
+            echo "needs_stack=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_stack=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload JS stack artifact
+        if: steps.build.outputs.needs_stack == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: js-stack-${{ inputs.stack_id || github.run_id }}
+          path: js-stack/
+          if-no-files-found: error

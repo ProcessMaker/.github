@@ -44,9 +44,25 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || (inputs.delete != '' && format('delete-{0}', inputs.delete)) || github.ref }}
   cancel-in-progress: true
 jobs:
+  jsStackBuild:
+    name: build-js-stack
+    needs: [deleteEKS]
+    if: |
+      !cancelled() &&
+      (needs.deleteEKS.result == 'success' || needs.deleteEKS.result == 'skipped') &&
+      github.event.action != 'closed' &&
+      inputs.delete == ''
+    uses: ./.github/workflows/js-package.yml
+    secrets: inherit
+    with:
+      trigger_repo: ${{ github.event.pull_request.head.repo.name || github.event.repository.name || 'processmaker' }}
+      trigger_ref: ${{ github.event.pull_request.head.ref || github.event.ref || 'develop' }}
+      pr_body: ${{ github.event_name == 'schedule' && '' || github.event.pull_request.body }}
+      stack_id: ${{ github.event.pull_request.number || github.run_id }}
+
   imageEKS:
     name: build-docker-image-EKS
-    needs: [deleteEKS]
+    needs: [deleteEKS, jsStackBuild]
     if: |
       !cancelled() &&
       (needs.deleteEKS.result == 'success' || needs.deleteEKS.result == 'skipped') &&
@@ -67,6 +83,13 @@ jobs:
         uses: ./.github/actions/common
         with:
           token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Download JS stack
+        if: needs.jsStackBuild.outputs.needs_stack == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: js-stack-${{ github.event.pull_request.number || github.run_id }}
+          path: pm4-k8s-distribution/images/js-stack
 
       - name: Set image name
         run: |
@@ -90,6 +113,10 @@ jobs:
         run: |
           cd pm4-k8s-distribution/images
           export CI_RELEASE_BRANCH=$RELEASE_BRANCH
+          if [[ -d js-stack && -f js-stack/manifest.json ]] && [[ "$(jq 'length' js-stack/manifest.json)" -gt 0 ]]; then
+            export JS_STACK_PATH="$(pwd)/js-stack"
+            echo "Using pre-built JS stack at $JS_STACK_PATH"
+          fi
           branch=$(echo "${{ env.CI_PACKAGE_BRANCH }}" | sed 's/refs-heads-//g') tag=${{env.IMAGE_TAG}} bash build.k8s-cicd.sh
           echo "VERSION=${{ env.IMAGE_TAG }}" >> $GITHUB_ENV
       - name: List Images
