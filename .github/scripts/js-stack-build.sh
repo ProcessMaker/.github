@@ -33,12 +33,20 @@ is_known_package() {
 fetch_package_json() {
   local repo="$1"
   local ref="$2"
+  ref=$(normalize_ref "$ref")
   gh api "repos/${GH_ORG}/${repo}/contents/package.json?ref=${ref}" --jq '.content' 2>/dev/null | base64 -d
 }
 
 default_branch() {
   local repo="$1"
   gh api "repos/${GH_ORG}/${repo}" --jq .default_branch
+}
+
+normalize_ref() {
+  local ref="$1"
+  ref="${ref#refs/heads/}"
+  ref="${ref#refs/tags/}"
+  echo "$ref"
 }
 
 resolve_ref() {
@@ -189,7 +197,7 @@ BUILT_TARBALLS=()
 build_package() {
   local repo="$1"
   local ref workdir
-  ref=$(resolve_ref "$repo")
+  ref=$(normalize_ref "$(resolve_ref "$repo")")
   workdir=$(mktemp -d)
 
   echo "=== Building ${repo} @ ${ref} ==="
