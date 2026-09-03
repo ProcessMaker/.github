@@ -96,13 +96,7 @@ resolve_ref() {
 }
 
 get_downstream() {
-  jq -r '
-    if (.processmaker | has("downstream")) then
-      .processmaker.downstream[]?
-    else
-      error("processmaker.downstream is required in package.json")
-    end
-  '
+  jq -r '(.processmaker.downstream // .processmaker.build.downstream // [])[]?'
 }
 
 get_build_command() {
@@ -258,7 +252,7 @@ build_package() {
   fi
 
   local build_cmd
-  build_cmd=$(jq -r '.processmaker.command // empty' package.json)
+  build_cmd=$(jq -r '.processmaker.command // .processmaker.build.command // empty' package.json)
   if [[ -z "$build_cmd" || "$build_cmd" == "null" ]]; then
     echo "::error::processmaker.command is required in package.json" >&2
     exit 1
