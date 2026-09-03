@@ -34,8 +34,11 @@ is_known_package() {
 fetch_package_json() {
   local repo="$1"
   local ref="$2"
+  local content
   ref=$(normalize_ref "$ref")
-  gh api "repos/${GH_ORG}/${repo}/contents/package.json?ref=${ref}" --jq '.content' 2>/dev/null | base64 -d
+  content=$(gh api "repos/${GH_ORG}/${repo}/contents/package.json?ref=${ref}" --jq '.content' 2>/dev/null) || return 1
+  [[ -n "$content" && "$content" != "null" ]] || return 1
+  echo "$content" | base64 -d
 }
 
 default_branch() {
@@ -231,7 +234,10 @@ build_package() {
   workdir=$(mktemp -d)
 
   echo "=== Building ${repo} @ ${ref} ==="
-  if ! git clone --depth 1 --branch "$ref" "https://github.com/${GH_ORG}/${repo}.git" "$workdir" 2>/dev/null; then
+  if is_commit_sha "$ref"; then
+    git clone "https://github.com/${GH_ORG}/${repo}.git" "$workdir"
+    git -C "$workdir" checkout "$ref"
+  elif ! git clone --depth 1 --branch "$ref" "https://github.com/${GH_ORG}/${repo}.git" "$workdir" 2>/dev/null; then
     git clone --depth 1 "https://github.com/${GH_ORG}/${repo}.git" "$workdir"
     git -C "$workdir" checkout "$ref"
   fi
