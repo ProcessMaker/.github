@@ -9,6 +9,7 @@ MANIFEST="${STACK_DIR}/manifest.json"
 BRANCH_MAP="${BRANCH_MAP:-{}}"
 TRIGGER_REPO="${TRIGGER_REPO:-}"
 TRIGGER_REF="${TRIGGER_REF:-}"
+TRIGGER_BRANCH="${TRIGGER_BRANCH:-}"
 GH_ORG="${GH_ORG:-ProcessMaker}"
 
 declare -A NPM_NAMES=(
@@ -49,6 +50,28 @@ normalize_ref() {
   echo "$ref"
 }
 
+is_commit_sha() {
+  [[ "$1" =~ ^[0-9a-f]{40}$ ]]
+}
+
+branch_exists() {
+  local repo="$1"
+  local branch="$2"
+  gh api "repos/${GH_ORG}/${repo}/branches/${branch}" >/dev/null 2>&1
+}
+
+cascade_branch() {
+  local branch="${TRIGGER_BRANCH:-}"
+  if [[ -z "$branch" ]]; then
+    branch=$(normalize_ref "${TRIGGER_REF:-}")
+    if is_commit_sha "$branch"; then
+      return 1
+    fi
+  fi
+  [[ -n "$branch" ]] || return 1
+  echo "$branch"
+}
+
 resolve_ref() {
   local repo="$1"
   local from_map
@@ -60,6 +83,13 @@ resolve_ref() {
   if [[ "$repo" == "$TRIGGER_REPO" && -n "$TRIGGER_REF" ]]; then
     echo "$TRIGGER_REF"
     return
+  fi
+  local shared_branch
+  if shared_branch=$(cascade_branch); then
+    if branch_exists "$repo" "$shared_branch"; then
+      echo "$shared_branch"
+      return
+    fi
   fi
   default_branch "$repo"
 }
