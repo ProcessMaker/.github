@@ -57,7 +57,7 @@ jobs:
     with:
       trigger_repo: ${{ github.event.pull_request.head.repo.name || github.event.repository.name || 'processmaker' }}
       trigger_ref: ${{ github.event.pull_request.head.ref || github.event.ref || 'develop' }}
-      pr_body: ${{ github.event_name == 'schedule' && '' || github.event.pull_request.body }}
+      pr_body: ${{ github.event_name == 'schedule' && toJSON('') || toJSON(github.event.pull_request.body || '') }}
       stack_id: ${{ github.event.pull_request.number || github.run_id }}
 
   imageEKS:

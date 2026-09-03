@@ -96,11 +96,13 @@ resolve_ref() {
 }
 
 get_downstream() {
-  if ! jq -e '.processmaker | has("downstream")' >/dev/null; then
-    echo "::error::processmaker.downstream is required in package.json" >&2
-    exit 1
-  fi
-  jq -r '.processmaker.downstream[]?'
+  jq -r '
+    if (.processmaker | has("downstream")) then
+      .processmaker.downstream[]?
+    else
+      error("processmaker.downstream is required in package.json")
+    end
+  '
 }
 
 get_build_command() {
