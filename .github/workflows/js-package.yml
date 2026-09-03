@@ -50,7 +50,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ProcessMaker/.github
-          ref: ${{ github.workflow_sha }}
+          ref: js-builds-2
 
       - uses: actions/setup-node@v4
         with:
