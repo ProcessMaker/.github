@@ -74,7 +74,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GIT_TOKEN || github.token }}
           INPUT_BRANCH_MAP: ${{ inputs.branch_map }}
-          INPUT_PR_BODY: ${{ inputs.pr_body }}
+          INPUT_PR_BODY: ${{ inputs.pr_body != '' && fromJSON(inputs.pr_body) || '' }}
           TRIGGER_REPO: ${{ inputs.trigger_repo }}
           TRIGGER_REF: ${{ inputs.trigger_ref }}
           TRIGGER_BRANCH: ${{ inputs.trigger_branch }}
@@ -101,20 +101,20 @@ jobs:
             merged=$(echo "$merged" | jq --arg r "$TRIGGER_REPO" --arg ref "$TRIGGER_REF" '. + {($r): $ref}')
           fi
 
-          echo "branch_map=$(echo "$merged" | jq -c .)" >> "$GITHUB_OUTPUT"
-          echo "Resolved branch map: $(echo "$merged" | jq .)"
+          echo "$merged" | jq -c . > branch_map.json
+          echo "Resolved branch map: $(jq . branch_map.json)"
 
       - name: Build JS stack
         id: build
         env:
           GH_TOKEN: ${{ secrets.GIT_TOKEN || github.token }}
-          BRANCH_MAP: ${{ steps.branches.outputs.branch_map }}
           TRIGGER_REPO: ${{ inputs.trigger_repo }}
           TRIGGER_REF: ${{ inputs.trigger_ref }}
           TRIGGER_BRANCH: ${{ inputs.trigger_branch }}
           STACK_DIR: js-stack
         run: |
           set -euo pipefail
+          export BRANCH_MAP="$(jq -c . branch_map.json)"
           bash .github/scripts/js-stack-build.sh
 
           count=$(jq 'length' js-stack/manifest.json)
