@@ -357,7 +357,7 @@ jobs:
   deleteEKS:
     name: Delete Instance
     if: github.event.action == 'closed' || inputs.delete != '' || contains(github.event.pull_request.body, 'ci:redeploy')
-    runs-on: ${{ vars.RUNNER }}
+    runs-on: self-hosted
     # GITHUB_TOKEN needs write to strip ci:redeploy from the PR body.
     # Using github.token (not GIT_TOKEN) so the edit does not trigger a new workflow run.
     permissions:
