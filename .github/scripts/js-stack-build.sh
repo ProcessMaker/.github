@@ -34,11 +34,9 @@ is_known_package() {
 fetch_package_json() {
   local repo="$1"
   local ref="$2"
-  local content
   ref=$(normalize_ref "$ref")
-  content=$(gh api "repos/${GH_ORG}/${repo}/contents/package.json?ref=${ref}" --jq '.content' 2>/dev/null) || return 1
-  [[ -n "$content" && "$content" != "null" ]] || return 1
-  echo "$content" | base64 -d
+  gh api "repos/${GH_ORG}/${repo}/contents/package.json?ref=${ref}" \
+    -H "Accept: application/vnd.github.raw" 2>/dev/null
 }
 
 default_branch() {
@@ -258,7 +256,11 @@ build_package() {
   fi
 
   local build_cmd
-  build_cmd=$(get_build_command)
+  build_cmd=$(jq -r '.processmaker.command // empty' package.json)
+  if [[ -z "$build_cmd" || "$build_cmd" == "null" ]]; then
+    echo "::error::processmaker.command is required in package.json" >&2
+    exit 1
+  fi
 
   if uses_yarn; then
     yarn run "$build_cmd"
