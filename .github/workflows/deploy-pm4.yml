@@ -53,6 +53,9 @@ jobs:
       github.event.action != 'closed' &&
       inputs.delete == ''
     runs-on: ${{ vars.RUNNER }}
+    permissions:
+      contents: read
+      id-token: write
     steps:
 
       - name: Checkout
@@ -68,6 +71,20 @@ jobs:
       - name: Set image name
         run: |
             echo "IMAGE=${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:$RESOLVED_IMAGE_TAG" >> $GITHUB_ENV
+      - name: Configure AWS credentials
+        if: ${{ !contains(github.event.pull_request.body, 'ci:skip-build') }}
+        uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_S3_READ_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+      - name: Download FrankenPHP binary
+        if: ${{ !contains(github.event.pull_request.body, 'ci:skip-build') }}
+        env:
+          FRANKENPHP_S3_BUCKET: ${{ secrets.FRANKENPHP_S3_BUCKET }}
+        run: |
+          aws s3 cp "s3://${FRANKENPHP_S3_BUCKET}/frankenphp" pm4-k8s-distribution/images/frankenphp --no-progress
+          echo "92966ca13e0a52e93d1382a853e8d6a1810288724ee71a3693d330a154dc64f6  pm4-k8s-distribution/images/frankenphp" | sha256sum --check
       - name: Generate image EKS
         if: ${{ !contains(github.event.pull_request.body, 'ci:skip-build') }}
         run: |
