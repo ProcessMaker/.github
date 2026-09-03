@@ -18,6 +18,11 @@ on:
         required: false
         type: string
         default: ''
+      trigger_branch:
+        description: Branch name for the originating repo (downstream cascade)
+        required: false
+        type: string
+        default: ''
       stack_id:
         description: Unique id for artifact grouping
         required: false
@@ -72,6 +77,7 @@ jobs:
           INPUT_PR_BODY: ${{ inputs.pr_body }}
           TRIGGER_REPO: ${{ inputs.trigger_repo }}
           TRIGGER_REF: ${{ inputs.trigger_ref }}
+          TRIGGER_BRANCH: ${{ inputs.trigger_branch }}
           CI_PROJECT: ${{ inputs.trigger_repo }}
           CI_PACKAGE_BRANCH: ${{ inputs.trigger_ref }}
         run: |
@@ -105,6 +111,7 @@ jobs:
           BRANCH_MAP: ${{ steps.branches.outputs.branch_map }}
           TRIGGER_REPO: ${{ inputs.trigger_repo }}
           TRIGGER_REF: ${{ inputs.trigger_ref }}
+          TRIGGER_BRANCH: ${{ inputs.trigger_branch }}
           STACK_DIR: js-stack
         run: |
           set -euo pipefail
