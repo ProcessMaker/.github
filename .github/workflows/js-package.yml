@@ -88,9 +88,9 @@ jobs:
           if [[ -n "$INPUT_PR_BODY" ]]; then
             ci_map=$(echo "$INPUT_PR_BODY" | grep -oE 'ci:[^[:space:]]+:[^[:space:]]+' | while read -r tag; do
               repo=$(echo "$tag" | cut -d: -f2)
-              branch=$(echo "$tag" | cut -d: -f3-)
-              echo "\"$repo\": \"$branch\""
-            done | jq -s 'from_entries' 2>/dev/null || echo '{}')
+              branch=$(echo "$tag" | cut -d: -f3- | tr -d '\r')
+              echo "{\"$repo\": \"$branch\"}"
+            done | jq -s 'add' 2>/dev/null || echo '{}')
           fi
 
           # Merge with explicit branch_map input
