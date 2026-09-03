@@ -65,7 +65,7 @@ jobs:
             echo "IMAGE=${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:$RESOLVED_IMAGE_TAG" >> $GITHUB_ENV
       - name: Configure AWS credentials
         if: ${{ !contains(github.event.pull_request.body, 'ci:skip-build') }}
-        uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c # v4
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ secrets.AWS_S3_READ_ROLE_ARN }}
           aws-region: us-east-1
