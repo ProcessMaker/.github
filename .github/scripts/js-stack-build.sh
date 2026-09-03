@@ -6,7 +6,7 @@ set -euo pipefail
 STACK_DIR="${STACK_DIR:-js-stack}"
 STACK_DIR="$(cd "$(dirname "$STACK_DIR")" 2>/dev/null && pwd)/$(basename "$STACK_DIR")" || STACK_DIR="$(pwd)/${STACK_DIR}"
 MANIFEST="${STACK_DIR}/manifest.json"
-BRANCH_MAP="${BRANCH_MAP:-{}}"
+BRANCH_MAP="${BRANCH_MAP:-"{}"}"
 TRIGGER_REPO="${TRIGGER_REPO:-}"
 TRIGGER_REF="${TRIGGER_REF:-}"
 TRIGGER_BRANCH="${TRIGGER_BRANCH:-}"
