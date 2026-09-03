@@ -48,6 +48,9 @@ jobs:
     steps:
       - name: Checkout .github
         uses: actions/checkout@v4
+        with:
+          repository: ProcessMaker/.github
+          ref: ${{ github.workflow_sha }}
 
       - uses: actions/setup-node@v4
         with:
