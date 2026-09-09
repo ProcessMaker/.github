@@ -85,6 +85,12 @@ jobs:
         run: |
           aws s3 cp "s3://${FRANKENPHP_S3_BUCKET}/frankenphp" pm4-k8s-distribution/images/frankenphp --no-progress
           echo "92966ca13e0a52e93d1382a853e8d6a1810288724ee71a3693d330a154dc64f6  pm4-k8s-distribution/images/frankenphp" | sha256sum --check
+      - name: Login to Harbor
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ secrets.REGISTRY_HOST  }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
       - name: Generate image EKS
         if: ${{ !contains(github.event.pull_request.body, 'ci:skip-build') }}
         run: |
@@ -108,12 +114,6 @@ jobs:
       #     severity: 'MEDIUM,HIGH,CRITICAL'
       #   env:
       #     TRIVY_TIMEOUT: 30m
-      - name: Login to Harbor
-        uses: docker/login-action@v2
-        with:
-          registry: ${{ secrets.REGISTRY_HOST  }}
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
       - name: Push Enterprise Image to Harbor
         if: ${{ !contains(github.event.pull_request.body, 'ci:skip-build') }}
         run: |          
