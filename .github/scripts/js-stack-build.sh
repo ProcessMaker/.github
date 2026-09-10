@@ -118,19 +118,6 @@ uses_yarn() {
 declare -A BUILD_SET=()
 declare -A EXPLICIT_SET=()
 
-add_immediate_upstream() {
-  local repo="$1"
-  local candidate ref pkg_json
-  for candidate in "${ALL_PACKAGES[@]}"; do
-    [[ "$candidate" == "$repo" ]] && continue
-    ref=$(resolve_ref "$candidate")
-    pkg_json=$(fetch_package_json "$candidate" "$ref") || continue
-    if echo "$pkg_json" | get_downstream | grep -qx "$repo"; then
-      BUILD_SET[$candidate]=1
-    fi
-  done
-}
-
 add_downstream() {
   local repo="$1"
   local ref pkg_json down
@@ -163,11 +150,6 @@ if [[ ${#BUILD_SET[@]} -eq 0 ]]; then
   mkdir -p "$STACK_DIR"
   echo '{}' > "$MANIFEST"
   exit 0
-fi
-
-# When modeler is explicitly tagged, build its immediate upstream publishers first
-if echo "$BRANCH_MAP" | jq -e '.modeler' >/dev/null 2>&1; then
-  add_immediate_upstream modeler
 fi
 
 # Downstream cascade for everything in the build set
