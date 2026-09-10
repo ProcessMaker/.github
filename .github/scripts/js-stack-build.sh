@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build @processmaker/* packages in dependency order, cascading downstream.
-# Reads processmaker.downstream and processmaker.command from each package.json (source of truth).
+# Reads processmaker.downstream from each package.json; runs build-bundle when present.
 set -euo pipefail
 
 STACK_DIR="${STACK_DIR:-js-stack}"
@@ -96,17 +96,7 @@ resolve_ref() {
 }
 
 get_downstream() {
-  jq -r '(.processmaker.downstream // .processmaker.build.downstream // [])[]?'
-}
-
-get_build_command() {
-  local cmd
-  cmd=$(jq -r '.processmaker.command // empty')
-  if [[ -z "$cmd" || "$cmd" == "null" ]]; then
-    echo "::error::processmaker.command is required in package.json" >&2
-    exit 1
-  fi
-  echo "$cmd"
+  jq -r '(.processmaker.downstream // [])[]?'
 }
 
 get_pm_deps() {
@@ -251,17 +241,14 @@ build_package() {
     done
   fi
 
-  local build_cmd
-  build_cmd=$(jq -r '.processmaker.command // .processmaker.build.command // empty' package.json)
-  if [[ -z "$build_cmd" || "$build_cmd" == "null" ]]; then
-    echo "::error::processmaker.command is required in package.json" >&2
-    exit 1
-  fi
-
-  if uses_yarn; then
-    yarn run "$build_cmd"
+  if jq -e '.scripts["build-bundle"]' package.json >/dev/null; then
+    if uses_yarn; then
+      yarn run build-bundle
+    else
+      npm run build-bundle
+    fi
   else
-    npm run "$build_cmd"
+    echo "No build-bundle script; skipping build"
   fi
 
   local pkg_name tarball dest
