@@ -217,10 +217,8 @@ build_package() {
   fi
 
   if [[ ${#BUILT_TARBALLS[@]} -gt 0 ]]; then
-    echo "Installing upstream tarballs..."
-    for tb in "${BUILT_TARBALLS[@]}"; do
-      npm install "$tb" --no-save --force
-    done
+    echo "Installing upstream tarballs in one npm install: ${BUILT_TARBALLS[*]}"
+    npm install "${BUILT_TARBALLS[@]}" --no-save --force
   fi
 
   local build_cmd
