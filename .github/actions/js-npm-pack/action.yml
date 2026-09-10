@@ -3,7 +3,7 @@ description: Install dependencies, optionally build, and create an npm tarball
 
 inputs:
   build-command:
-    description: npm script to run before pack; defaults to build-bundle when that script exists
+    description: Full build command override; defaults to processmaker.build or npm run build-bundle
     required: false
     default: ''
   node-version:
@@ -34,15 +34,20 @@ runs:
       run: |
         set -euo pipefail
 
-        command="$INPUT_BUILD_COMMAND"
-        if [ -z "$command" ] && jq -e '.scripts["build-bundle"]' package.json >/dev/null; then
-          command="build-bundle"
+        build_cmd="$INPUT_BUILD_COMMAND"
+        if [ -z "$build_cmd" ]; then
+          build_cmd=$(jq -r '.processmaker.build // empty' package.json)
+        fi
+        if [ -z "$build_cmd" ] || [ "$build_cmd" = "null" ]; then
+          if jq -e '.scripts["build-bundle"]' package.json >/dev/null; then
+            build_cmd="npm run build-bundle"
+          fi
         fi
 
         npm ci
 
-        if [ -n "$command" ]; then
-          npm run "$command"
+        if [ -n "$build_cmd" ]; then
+          bash -c "$build_cmd"
         fi
 
         pkg_name=$(jq -r '.name' package.json)

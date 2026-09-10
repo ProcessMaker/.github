@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build @processmaker/* packages in dependency order, cascading downstream.
-# Reads processmaker.downstream from each package.json; runs build-bundle when present.
+# Reads processmaker.downstream from each package.json; runs processmaker.build or npm run build-bundle.
 set -euo pipefail
 
 STACK_DIR="${STACK_DIR:-js-stack}"
@@ -241,12 +241,13 @@ build_package() {
     done
   fi
 
-  if jq -e '.scripts["build-bundle"]' package.json >/dev/null; then
-    if uses_yarn; then
-      yarn run build-bundle
-    else
-      npm run build-bundle
-    fi
+  local build_cmd
+  build_cmd=$(jq -r '.processmaker.build // empty' package.json)
+  if [[ -n "$build_cmd" && "$build_cmd" != "null" ]]; then
+    echo "Running: ${build_cmd}"
+    bash -c "$build_cmd"
+  elif jq -e '.scripts["build-bundle"]' package.json >/dev/null; then
+    npm run build-bundle
   else
     echo "No build-bundle script; skipping build"
   fi
