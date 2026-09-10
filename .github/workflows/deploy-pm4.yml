@@ -120,6 +120,11 @@ jobs:
           cd pm4-k8s-distribution/images
           export CI_RELEASE_BRANCH=$RELEASE_BRANCH
           export REGISTRY_HOST=${{ secrets.REGISTRY_HOST }}
+          if [[ "${{ github.event.pull_request.body }}" == *"ci:no-cache"* ]]; then
+            export REBUILD_CACHE=true
+            export DOCKER_BUILD_NO_CACHE=1
+            echo "ci:no-cache — rebuilding Docker images without layer cache"
+          fi
           if [[ -d js-stack && -f js-stack/manifest.json ]] && [[ "$(jq 'length' js-stack/manifest.json)" -gt 0 ]]; then
             export JS_STACK_PATH="$(pwd)/js-stack"
             echo "Using pre-built JS stack at $JS_STACK_PATH"
