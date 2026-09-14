@@ -28,11 +28,13 @@ if ! kubectl get namespace/ci-{{INSTANCE}}-ns-pm4 >/dev/null 2>&1; then
     echo "Removing Job"
     kubectl delete job mysql-setup-job-ci-{{INSTANCE}}
     echo "Deploying Instance :: ci-{{INSTANCE}}"
+    echo "OCTANE: ${OCTANE}"
     cat .github/templates/instance.yaml
     # Evaluate the command and store the result
     APP_VERSION=$(echo "$CI_PROJECT-$CI_PACKAGE_BRANCH" | sed "s;/;-;g" | sed "s/refs-heads-//g")
 
     helm install --timeout 75m -f .github/templates/instance.yaml ci-{{INSTANCE}} processmaker/enterprise \
+        --set deploy.web.octane.enable=${OCTANE} \
         --set deploy.pmai.openaiApiKey=${OPENAI_API_KEY} \
         --set analytics.awsAccessKey=${ANALYTICS_AWS_ACCESS_KEY} \
         --set analytics.awsSecretKey=${ANALYTICS_AWS_SECRET_KEY} \
