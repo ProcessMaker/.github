@@ -416,8 +416,11 @@ jobs:
           fi
           kubectl version --client
 
-      - name: Authenticate with Amazon EKS
-        run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
+      # Self-hosted delete runners ship kubeconfig; no AWS CLI / update-kubeconfig here.
+      - name: Verify EKS cluster access
+        run: |
+          kubectl config current-context
+          kubectl cluster-info --request-timeout=15s
 
       - name: Login to Harbor
         uses: docker/login-action@v2
