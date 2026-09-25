@@ -368,6 +368,7 @@ jobs:
         with:
           repository: ProcessMaker/testbench
           path: testbench
+          token: ${{ secrets.GIT_TOKEN }}
 
       - name: Run testbench
         working-directory: testbench
