@@ -407,11 +407,14 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Set up kubectl
+      # Self-hosted delete runners ship kubectl; do not download or sudo-install here.
+      - name: Verify kubectl
         run: |
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/
+          if ! command -v kubectl >/dev/null 2>&1; then
+            echo "ERROR: kubectl must be pre-installed on self-hosted delete runners"
+            exit 1
+          fi
+          kubectl version --client
 
       - name: Authenticate with Amazon EKS
         run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
