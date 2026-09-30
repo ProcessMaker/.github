@@ -65,8 +65,8 @@ jobs:
         if: ${{ !inputs.skip_build }}
         uses: actions/checkout@v4
         with:
-          repository: processmaker/.github
-          ref: ${{ github.workflow_sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
 
       - name: Common
         if: ${{ !inputs.skip_build }}

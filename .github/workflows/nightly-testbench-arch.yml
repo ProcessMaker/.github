@@ -51,8 +51,8 @@ jobs:
       - name: Checkout .github repo
         uses: actions/checkout@v4
         with:
-          repository: processmaker/.github
-          ref: ${{ github.workflow_sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
 
       - name: Common
         uses: ./.github/actions/common
@@ -193,8 +193,8 @@ jobs:
       - name: Checkout .github repo
         uses: actions/checkout@v4
         with:
-          repository: processmaker/.github
-          ref: ${{ github.workflow_sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
