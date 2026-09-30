@@ -55,7 +55,7 @@ multitenancy:
 microservices:
   scriptExecutor:
     enable: true
-    customExecutors: false
+    customExecutors: true
     baseUrl: https://script-microsvr-us-east-1.processmaker.net
     version: v4.15.0
     keycloakClientId: microservices
