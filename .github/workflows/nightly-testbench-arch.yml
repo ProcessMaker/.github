@@ -1,0 +1,228 @@
+name: nightly-testbench-arch
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        required: true
+        type: string
+      octane:
+        required: true
+        type: boolean
+      multitenancy:
+        required: true
+        type: boolean
+      arch_id:
+        required: true
+        type: string
+      tenants_json:
+        required: true
+        type: string
+
+env:
+  CI_PROJECT: processmaker
+  CI_PACKAGE_BRANCH: develop
+  IMAGE_TAG: ${{ inputs.image_tag }}
+  CI_PR_BODY: 'ci:release-branch:develop'
+  OCTANE: ${{ inputs.octane && 'true' || 'false' }}
+  MULTITENANCY: ${{ inputs.multitenancy && 'true' || 'false' }}
+  GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+  DOM_EKS: ${{ secrets.DOM_EKS }}
+  CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
+  PMAI_HOST: pmai-svc.pmai-system.svc.cluster.local
+  PMAI_HOST_WS: pmai-ws.engk8s.processmaker.net
+
+jobs:
+  deploy:
+    name: deploy-${{ inputs.arch_id }}
+    runs-on: ${{ vars.RUNNER }}
+    timeout-minutes: 120
+    outputs:
+      instance: ${{ steps.instance.outputs.instance }}
+    steps:
+      - name: Set instance id
+        id: instance
+        run: |
+          instance="nt$(echo -n "${{ github.run_id }}-${{ inputs.arch_id }}" | md5sum | head -c 8)"
+          echo "instance=$instance" >> "$GITHUB_OUTPUT"
+          echo "INSTANCE=$instance" >> "$GITHUB_ENV"
+          echo "INSTANCE: $instance"
+
+      - name: Checkout .github repo
+        uses: actions/checkout@v4
+        with:
+          repository: processmaker/.github
+          ref: ${{ github.workflow_sha }}
+
+      - name: Common
+        uses: ./.github/actions/common
+        with:
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Install pm4-tools
+        run: |
+          cd pm4-k8s-distribution/images/pm4-tools
+          composer install --no-interaction
+          cd ..
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Set up kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Authenticate with Amazon EKS
+        run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
+
+      - name: Deploy instance EKS
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          CURRENT_DATE: ${{ github.run_id }}
+          HELM_REPO: ${{ secrets.HELM_REPO }}
+          HELM_USERNAME: ${{ secrets.HELM_USERNAME }}
+          HELM_PASSWORD: ${{ secrets.HELM_PASSWORD }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANALYTICS_AWS_ACCESS_KEY: ${{ secrets.ANALYTICS_AWS_ACCESS_KEY }}
+          ANALYTICS_AWS_SECRET_KEY: ${{ secrets.ANALYTICS_AWS_SECRET_KEY }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+          REGISTRY_HOST: ${{ secrets.REGISTRY_HOST }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          TWILIO_SID: ${{ secrets.TWILIO_SID }}
+          TWILIO_TOKEN: ${{ secrets.TWILIO_TOKEN }}
+          versionHelm: ${{ env.versionHelm }}
+          DOM_EKS: ${{ secrets.DOM_EKS }}
+          KEYCLOAK_CLIENT_SECRET: ${{ secrets.KEYCLOAK_CLIENT_SECRET }}
+          KEYCLOAK_PASSWORD: ${{ secrets.KEYCLOAK_PASSWORD }}
+          CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
+          RDS_ADMIN_USERNAME: ${{ secrets.RDS_ADMIN_USERNAME }}
+          RDS_ADMIN_PASSWORD: ${{ secrets.RDS_ADMIN_PASSWORD }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          OCTANE: ${{ env.OCTANE }}
+          MULTITENANCY: ${{ env.MULTITENANCY }}
+          CI_PROJECT: processmaker
+          CI_PACKAGE_BRANCH: develop
+        run: |
+          instance="${{ steps.instance.outputs.instance }}"
+          echo "INSTANCE: $instance"
+          echo "IMAGE_TAG: $IMAGE_TAG"
+          echo "OCTANE: $OCTANE"
+          echo "MULTITENANCY: $MULTITENANCY"
+
+          sed -i "s#{{INSTANCE}}#$instance#g" .github/scripts/deploy-instance.sh
+          sed -i "s#{{INSTANCE}}#$instance#g" .github/templates/instance.yaml
+          sed -i "s#{{INSTANCE}}#$instance#g" .github/templates/db.yaml
+          sed -i "s#{{IMAGE_TAG}}#$IMAGE_TAG#g" .github/templates/instance.yaml
+          sed -i "s#{{KEYCLOAK_CLIENT_SECRET}}#$KEYCLOAK_CLIENT_SECRET#g" .github/templates/instance.yaml
+          sed -i "s#{{KEYCLOAK_PASSWORD}}#$KEYCLOAK_PASSWORD#g" .github/templates/instance.yaml
+          sed -i "s#{{CUSTOMER_LICENSES_PAT}}#$CUSTOMER_LICENSES_PAT#g" .github/templates/instance.yaml
+          sed -i "s#{{MYSQL_USER}}#$RDS_ADMIN_USERNAME#g" .github/templates/instance.yaml
+          sed -i "s#{{MYSQL_PASSWORD}}#$RDS_ADMIN_PASSWORD#g" .github/templates/instance.yaml
+          sed -i "s#{{MULTITENANCY}}#$MULTITENANCY#g" .github/templates/instance.yaml
+          sed -i "s#{{PMAI_HOST}}#$PMAI_HOST#g" .github/templates/instance.yaml
+          sed -i "s#{{PMAI_HOST_WS}}#$PMAI_HOST_WS#g" .github/templates/instance.yaml
+          sed -i "s#{{MYSQL_USERNAME}}#$RDS_ADMIN_USERNAME#g" .github/templates/db.yaml
+          sed -i "s#{{MYSQL_PASSWORD}}#$RDS_ADMIN_PASSWORD#g" .github/templates/db.yaml
+          chmod +x .github/scripts/deploy-instance.sh
+          bash .github/scripts/deploy-instance.sh
+
+  testbench:
+    name: testbench-${{ inputs.arch_id }}-${{ matrix.tenant }}
+    needs: [deploy]
+    if: ${{ !cancelled() && needs.deploy.result == 'success' }}
+    runs-on: ${{ vars.RUNNER }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        tenant: ${{ fromJSON(inputs.tenants_json) }}
+    steps:
+      - name: Checkout testbench
+        uses: actions/checkout@v4
+        with:
+          repository: ProcessMaker/testbench
+          path: testbench
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Run testbench
+        working-directory: testbench
+        env:
+          SITE_NAME: CI
+          INSTANCE_PASSWORD: ${{ secrets.CI_INSTANCE_PASSWORD }}
+          CONTEXT_PATH: ./context
+          TCP_TUNNELS: "mailserver:587 mailserver:993"
+        run: |
+          instance="${{ needs.deploy.outputs.instance }}"
+          tenant="${{ matrix.tenant }}"
+          echo "INSTANCE: $instance"
+          echo "TENANT: $tenant"
+          if [ "$tenant" = "single" ]; then
+            export URL="https://ci-$instance.engk8s.processmaker.net"
+          else
+            export URL="https://$tenant.ci-$instance.engk8s.processmaker.net"
+          fi
+          echo "URL: $URL"
+          export USER_GROUP="$(id -u):$(id -g)"
+          chmod +x ./start.sh
+          ./start.sh
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-${{ inputs.arch_id }}-${{ matrix.tenant }}
+          path: |
+            testbench/playwright-report
+            testbench/test-results
+          if-no-files-found: ignore
+
+  delete:
+    name: delete-${{ inputs.arch_id }}
+    needs: [deploy, testbench]
+    if: ${{ always() && needs.deploy.result != 'skipped' }}
+    runs-on: self-hosted
+    timeout-minutes: 30
+    steps:
+      - name: Checkout .github repo
+        uses: actions/checkout@v4
+        with:
+          repository: processmaker/.github
+          ref: ${{ github.workflow_sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Verify kubectl
+        run: |
+          if ! command -v kubectl >/dev/null 2>&1; then
+            echo "ERROR: kubectl must be pre-installed on self-hosted delete runners"
+            exit 1
+          fi
+          kubectl version --client
+
+      - name: Verify EKS cluster access
+        run: |
+          kubectl config current-context
+          kubectl cluster-info --request-timeout=15s
+
+      - name: Delete instance EKS
+        env:
+          INSTANCE: ${{ needs.deploy.outputs.instance }}
+          USER_MYSQL_ENG: ${{ secrets.USER_MYSQL_ENG }}
+          PASS_MYSQL_ENG: ${{ secrets.PASS_MYSQL_ENG }}
+          RDS_ENG: ${{ secrets.RDS_ENG }}
+          DELETE_HARBOR: "false"
+        run: |
+          chmod +x .github/scripts/delete-instance.sh
+          bash .github/scripts/delete-instance.sh

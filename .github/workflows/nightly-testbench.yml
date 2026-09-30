@@ -1,0 +1,214 @@
+name: Nightly Testbench
+
+on:
+  workflow_call:
+    inputs:
+      skip_build:
+        description: Skip Docker image build and reuse Harbor processmaker-develop
+        required: false
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      skip_build:
+        description: Skip Docker image build and reuse Harbor processmaker-develop
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: nightly-testbench
+  cancel-in-progress: false
+
+env:
+  CI_PROJECT: processmaker
+  CI_PACKAGE_BRANCH: develop
+  IMAGE_TAG: processmaker-develop
+  CI_PR_BODY: 'ci:release-branch:develop'
+  GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+  CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
+  PMAI_HOST: pmai-svc.pmai-system.svc.cluster.local
+  PMAI_HOST_WS: pmai-ws.engk8s.processmaker.net
+
+jobs:
+  jsStackBuild:
+    name: build-js-stack
+    if: ${{ !inputs.skip_build }}
+    uses: ./.github/workflows/js-package.yml
+    secrets: inherit
+    with:
+      trigger_repo: processmaker
+      trigger_ref: develop
+      stack_id: ${{ github.run_id }}
+
+  imageEKS:
+    name: build-docker-image-EKS
+    needs: [jsStackBuild]
+    if: ${{ !cancelled() && (needs.jsStackBuild.result == 'success' || needs.jsStackBuild.result == 'skipped') }}
+    runs-on: ${{ vars.RUNNER }}
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image_tag: ${{ steps.tag.outputs.image_tag }}
+    steps:
+      - name: Set image tag
+        id: tag
+        run: echo "image_tag=processmaker-develop" >> "$GITHUB_OUTPUT"
+
+      - name: Use existing Harbor image
+        if: ${{ inputs.skip_build }}
+        run: echo "Skipping build; deploying Harbor processmaker/enterprise:processmaker-develop"
+
+      - name: Checkout
+        if: ${{ !inputs.skip_build }}
+        uses: actions/checkout@v4
+        with:
+          repository: processmaker/.github
+          ref: ${{ github.workflow_sha }}
+
+      - name: Common
+        if: ${{ !inputs.skip_build }}
+        uses: ./.github/actions/common
+        with:
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Download JS stack
+        if: ${{ !inputs.skip_build && needs.jsStackBuild.outputs.needs_stack == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: js-stack-${{ github.run_id }}
+          path: pm4-k8s-distribution/images/js-stack
+
+      - name: Configure AWS credentials
+        if: ${{ !inputs.skip_build }}
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ secrets.AWS_S3_READ_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+
+      - name: Download FrankenPHP binary
+        if: ${{ !inputs.skip_build }}
+        env:
+          FRANKENPHP_S3_BUCKET: ${{ secrets.FRANKENPHP_S3_BUCKET }}
+        run: |
+          aws s3 cp "s3://${FRANKENPHP_S3_BUCKET}/frankenphp" pm4-k8s-distribution/images/frankenphp --no-progress
+          echo "92966ca13e0a52e93d1382a853e8d6a1810288724ee71a3693d330a154dc64f6  pm4-k8s-distribution/images/frankenphp" | sha256sum --check
+
+      - name: Login to Harbor
+        if: ${{ !inputs.skip_build }}
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ secrets.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Generate image EKS
+        if: ${{ !inputs.skip_build }}
+        run: |
+          cd pm4-k8s-distribution/images
+          export CI_RELEASE_BRANCH=$RELEASE_BRANCH
+          export REGISTRY_HOST=${{ secrets.REGISTRY_HOST }}
+          if [[ -d js-stack && -f js-stack/manifest.json ]] && [[ "$(jq 'length' js-stack/manifest.json)" -gt 0 ]]; then
+            export JS_STACK_PATH="$(pwd)/js-stack"
+            echo "Using pre-built JS stack at $JS_STACK_PATH"
+          fi
+          branch=develop tag=processmaker-develop bash build.k8s-cicd.sh
+
+      - name: Push Enterprise Image to Harbor
+        if: ${{ !inputs.skip_build }}
+        run: |
+          docker tag processmaker/enterprise:processmaker-develop ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:processmaker-develop
+          docker push ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:processmaker-develop
+
+      - name: Check rate limit on failure
+        if: failure()
+        run: |
+          echo "=== Checking GitHub API rate limit status ==="
+          curl -I --header "Authorization: Bearer ${{ secrets.GIT_TOKEN }}" https://api.github.com
+          echo ""
+          echo "=== Rate limit check complete ==="
+
+  fpm-st:
+    name: fpm-st
+    needs: [imageEKS]
+    if: ${{ !cancelled() && needs.imageEKS.result == 'success' }}
+    uses: ./.github/workflows/nightly-testbench-arch.yml
+    secrets: inherit
+    with:
+      image_tag: ${{ needs.imageEKS.outputs.image_tag }}
+      octane: false
+      multitenancy: false
+      arch_id: fpm-st
+      tenants_json: '["single"]'
+
+  fpm-mt:
+    name: fpm-mt
+    needs: [imageEKS]
+    if: ${{ !cancelled() && needs.imageEKS.result == 'success' }}
+    uses: ./.github/workflows/nightly-testbench-arch.yml
+    secrets: inherit
+    with:
+      image_tag: ${{ needs.imageEKS.outputs.image_tag }}
+      octane: false
+      multitenancy: true
+      arch_id: fpm-mt
+      tenants_json: '["tenant-1","tenant-2","tenant-3"]'
+
+  octane-st:
+    name: octane-st
+    needs: [imageEKS]
+    if: ${{ !cancelled() && needs.imageEKS.result == 'success' }}
+    uses: ./.github/workflows/nightly-testbench-arch.yml
+    secrets: inherit
+    with:
+      image_tag: ${{ needs.imageEKS.outputs.image_tag }}
+      octane: true
+      multitenancy: false
+      arch_id: octane-st
+      tenants_json: '["single"]'
+
+  octane-mt:
+    name: octane-mt
+    needs: [imageEKS]
+    if: ${{ !cancelled() && needs.imageEKS.result == 'success' }}
+    uses: ./.github/workflows/nightly-testbench-arch.yml
+    secrets: inherit
+    with:
+      image_tag: ${{ needs.imageEKS.outputs.image_tag }}
+      octane: true
+      multitenancy: true
+      arch_id: octane-mt
+      tenants_json: '["tenant-1","tenant-2","tenant-3"]'
+
+  summary:
+    name: summary
+    needs: [imageEKS, fpm-st, fpm-mt, octane-st, octane-mt]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check nightly results
+        run: |
+          echo "imageEKS: ${{ needs.imageEKS.result }}"
+          echo "fpm-st: ${{ needs.fpm-st.result }}"
+          echo "fpm-mt: ${{ needs.fpm-mt.result }}"
+          echo "octane-st: ${{ needs.octane-st.result }}"
+          echo "octane-mt: ${{ needs.octane-mt.result }}"
+          failed=0
+          for result in \
+            "${{ needs.fpm-st.result }}" \
+            "${{ needs.fpm-mt.result }}" \
+            "${{ needs.octane-st.result }}" \
+            "${{ needs.octane-mt.result }}"
+          do
+            if [ "$result" != "success" ]; then
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "One or more architecture pipelines failed or were skipped"
+            exit 1
+          fi
+          echo "All architecture pipelines succeeded"
