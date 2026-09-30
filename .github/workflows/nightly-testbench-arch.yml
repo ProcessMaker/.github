@@ -31,10 +31,56 @@ env:
   CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
   PMAI_HOST: pmai-svc.pmai-system.svc.cluster.local
   PMAI_HOST_WS: pmai-ws.engk8s.processmaker.net
+  INSTANCE: nt-${{ inputs.arch_id }}
 
 jobs:
+  delete:
+    name: delete-${{ inputs.arch_id }}
+    runs-on: self-hosted
+    timeout-minutes: 30
+    steps:
+      - name: Checkout .github repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Verify kubectl
+        run: |
+          if ! command -v kubectl >/dev/null 2>&1; then
+            echo "ERROR: kubectl must be pre-installed on self-hosted delete runners"
+            exit 1
+          fi
+          kubectl version --client
+
+      - name: Verify EKS cluster access
+        run: |
+          kubectl config current-context
+          kubectl cluster-info --request-timeout=15s
+
+      - name: Delete instance EKS
+        env:
+          INSTANCE: ${{ env.INSTANCE }}
+          USER_MYSQL_ENG: ${{ secrets.USER_MYSQL_ENG }}
+          PASS_MYSQL_ENG: ${{ secrets.PASS_MYSQL_ENG }}
+          RDS_ENG: ${{ secrets.RDS_ENG }}
+          DELETE_HARBOR: "false"
+        run: |
+          echo "INSTANCE: $INSTANCE"
+          chmod +x .github/scripts/delete-instance.sh
+          bash .github/scripts/delete-instance.sh
+
   deploy:
     name: deploy-${{ inputs.arch_id }}
+    needs: [delete]
+    if: ${{ !cancelled() && needs.delete.result == 'success' }}
     runs-on: ${{ vars.RUNNER }}
     timeout-minutes: 120
     outputs:
@@ -43,7 +89,7 @@ jobs:
       - name: Set instance id
         id: instance
         run: |
-          instance="nt$(echo -n "${{ github.run_id }}-${{ inputs.arch_id }}" | md5sum | head -c 8)"
+          instance="${{ env.INSTANCE }}"
           echo "instance=$instance" >> "$GITHUB_OUTPUT"
           echo "INSTANCE=$instance" >> "$GITHUB_ENV"
           echo "INSTANCE: $instance"
@@ -182,47 +228,3 @@ jobs:
             testbench/playwright-report
             testbench/test-results
           if-no-files-found: ignore
-
-  delete:
-    name: delete-${{ inputs.arch_id }}
-    needs: [deploy, testbench]
-    if: ${{ always() && needs.deploy.result != 'skipped' }}
-    runs-on: self-hosted
-    timeout-minutes: 30
-    steps:
-      - name: Checkout .github repo
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Verify kubectl
-        run: |
-          if ! command -v kubectl >/dev/null 2>&1; then
-            echo "ERROR: kubectl must be pre-installed on self-hosted delete runners"
-            exit 1
-          fi
-          kubectl version --client
-
-      - name: Verify EKS cluster access
-        run: |
-          kubectl config current-context
-          kubectl cluster-info --request-timeout=15s
-
-      - name: Delete instance EKS
-        env:
-          INSTANCE: ${{ needs.deploy.outputs.instance }}
-          USER_MYSQL_ENG: ${{ secrets.USER_MYSQL_ENG }}
-          PASS_MYSQL_ENG: ${{ secrets.PASS_MYSQL_ENG }}
-          RDS_ENG: ${{ secrets.RDS_ENG }}
-          DELETE_HARBOR: "false"
-        run: |
-          chmod +x .github/scripts/delete-instance.sh
-          bash .github/scripts/delete-instance.sh

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Delete a CI Helm release, namespace, and RDS databases for one instance.
 # Required env:
-#   INSTANCE          10-char instance id (not an image tag)
+#   INSTANCE          instance id (not an image tag)
 #   USER_MYSQL_ENG, PASS_MYSQL_ENG, RDS_ENG
 # Optional:
 #   DELETE_HARBOR     true to delete the Harbor artifact (default false)
