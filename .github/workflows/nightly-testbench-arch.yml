@@ -18,6 +18,11 @@ on:
       tenants_json:
         required: true
         type: string
+      redeploy_only:
+        description: Delete and redeploy instances without running testbench
+        required: false
+        type: boolean
+        default: false
 
 env:
   CI_PROJECT: processmaker
@@ -182,7 +187,7 @@ jobs:
   testbench:
     name: testbench-${{ inputs.arch_id }}-${{ matrix.tenant }}
     needs: [deploy]
-    if: ${{ !cancelled() && needs.deploy.result == 'success' }}
+    if: ${{ !cancelled() && needs.deploy.result == 'success' && !inputs.redeploy_only }}
     runs-on: ${{ vars.RUNNER }}
     timeout-minutes: 90
     strategy:

@@ -8,6 +8,11 @@ on:
         required: false
         type: boolean
         default: false
+      redeploy_only:
+        description: Delete and redeploy instances without running testbench
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       skip_build:
@@ -15,6 +20,14 @@ on:
         required: false
         type: boolean
         default: false
+      mode:
+        description: Run testbench after deploy, or only delete and redeploy instances
+        required: true
+        type: choice
+        default: Run Now
+        options:
+          - Run Now
+          - Redeploy Only
 
 concurrency:
   group: nightly-testbench
@@ -143,6 +156,7 @@ jobs:
       multitenancy: false
       arch_id: fpm-st
       tenants_json: '["single"]'
+      redeploy_only: ${{ inputs.redeploy_only == true || inputs.mode == 'Redeploy Only' }}
 
   fpm-mt:
     name: fpm-mt
@@ -156,6 +170,7 @@ jobs:
       multitenancy: true
       arch_id: fpm-mt
       tenants_json: '["tenant-1","tenant-2","tenant-3"]'
+      redeploy_only: ${{ inputs.redeploy_only == true || inputs.mode == 'Redeploy Only' }}
 
   octane-st:
     name: octane-st
@@ -169,6 +184,7 @@ jobs:
       multitenancy: false
       arch_id: octane-st
       tenants_json: '["single"]'
+      redeploy_only: ${{ inputs.redeploy_only == true || inputs.mode == 'Redeploy Only' }}
 
   octane-mt:
     name: octane-mt
@@ -182,6 +198,7 @@ jobs:
       multitenancy: true
       arch_id: octane-mt
       tenants_json: '["tenant-1","tenant-2","tenant-3"]'
+      redeploy_only: ${{ inputs.redeploy_only == true || inputs.mode == 'Redeploy Only' }}
 
   summary:
     name: summary
