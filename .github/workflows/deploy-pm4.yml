@@ -660,8 +660,7 @@ jobs:
       !cancelled() &&
       needs.runPhpUnit.result == 'success' &&
       github.event.action != 'closed' &&
-      inputs.delete == '' &&
-      env.CI_PROJECT == 'package-academic-catalog'
+      inputs.delete == ''
     runs-on: ${{ vars.RUNNER }}
     steps:
       - name: Checkout package
