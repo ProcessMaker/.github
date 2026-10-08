@@ -364,6 +364,40 @@ jobs:
       contains(github.event.pull_request.body, 'ci:run-testbench')
     runs-on: ${{ vars.RUNNER }}
     steps:
+      - name: Checkout dot-github
+        uses: actions/checkout@v4
+        with:
+          repository: processmaker/.github
+          path: dot-github
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Common
+        uses: ./dot-github/.github/actions/common
+        with:
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Authenticate with Amazon EKS
+        run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
+
+      - name: Enable testbench runner relay
+        working-directory: dot-github
+        env:
+          HELM_REPO: ${{ secrets.HELM_REPO }}
+          HELM_USERNAME: ${{ secrets.HELM_USERNAME }}
+          HELM_PASSWORD: ${{ secrets.HELM_PASSWORD }}
+          TAILSCALE_AUTH_KEY_CI_RELAY: ${{ secrets.TAILSCALE_AUTH_KEY_CI_RELAY }}
+        run: |
+          instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
+          chmod +x .github/scripts/enable-testbench-relay.sh
+          .github/scripts/enable-testbench-relay.sh "$instance"
+
       - name: Checkout testbench
         uses: actions/checkout@v4
         with:
@@ -377,9 +411,12 @@ jobs:
           SITE_NAME: CI
           INSTANCE_PASSWORD: ${{ secrets.CI_INSTANCE_PASSWORD }}
           CONTEXT_PATH: ./context
-          TCP_TUNNELS: "mailserver:587 mailserver:993"
+          USE_RUNNER_RELAY: "true"
+          USE_TUNNEL: "false"
+          TAILSCALE_AUTH_KEY_CI_RUNNER: ${{ secrets.TAILSCALE_AUTH_KEY_CI_RUNNER }}
         run: |
           instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
+          export INSTANCE="$instance"
           echo "INSTANCE: $instance"
           if [ "${{ env.MULTITENANCY }}" = "true" ]; then
             export URL="https://tenant-1.ci-$instance.engk8s.processmaker.net"
