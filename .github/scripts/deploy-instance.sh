@@ -4,6 +4,20 @@ current_datetime=$(echo -n ${CURRENT_DATE} | md5sum | head -c 10)
 echo "NAMESPACE : ci-{{INSTANCE}}-ns-pm4"
 helm repo add processmaker ${HELM_REPO} --username ${HELM_USERNAME} --password ${HELM_PASSWORD} && helm repo update
 
+helm_common_sets() {
+  echo \
+    --set deploy.web.octane.enable=${OCTANE} \
+    --set deploy.pmai.openaiApiKey=${OPENAI_API_KEY} \
+    --set analytics.awsAccessKey=${ANALYTICS_AWS_ACCESS_KEY} \
+    --set analytics.awsSecretKey=${ANALYTICS_AWS_SECRET_KEY} \
+    --set dockerRegistry.password=${REGISTRY_PASSWORD} \
+    --set dockerRegistry.url=${REGISTRY_HOST} \
+    --set dockerRegistry.username=${REGISTRY_USERNAME} \
+    --set twilio.sid=${TWILIO_SID} \
+    --set twilio.token=${TWILIO_TOKEN} \
+    --set appVersion=${APP_VERSION}
+}
+
 if ! kubectl get namespace/ci-{{INSTANCE}}-ns-pm4 >/dev/null 2>&1; then
     echo "New instance. Creating Namespace"
     kubectl create namespace ci-{{INSTANCE}}-ns-pm4
@@ -34,20 +48,14 @@ if ! kubectl get namespace/ci-{{INSTANCE}}-ns-pm4 >/dev/null 2>&1; then
     APP_VERSION=$(echo "$CI_PROJECT-$CI_PACKAGE_BRANCH" | sed "s;/;-;g" | sed "s/refs-heads-//g")
 
     helm install --timeout 75m -f .github/templates/instance.yaml ci-{{INSTANCE}} processmaker/enterprise \
-        --set deploy.web.octane.enable=${OCTANE} \
-        --set deploy.pmai.openaiApiKey=${OPENAI_API_KEY} \
-        --set analytics.awsAccessKey=${ANALYTICS_AWS_ACCESS_KEY} \
-        --set analytics.awsSecretKey=${ANALYTICS_AWS_SECRET_KEY} \
-        --set dockerRegistry.password=${REGISTRY_PASSWORD} \
-        --set dockerRegistry.url=${REGISTRY_HOST} \
-        --set dockerRegistry.username=${REGISTRY_USERNAME} \
-        --set twilio.sid=${TWILIO_SID} \
-        --set twilio.token=${TWILIO_TOKEN} \
-        --set appVersion=${APP_VERSION} \
+        $(helm_common_sets) \
         --version ${versionHelm}
 else
     echo "Instance exists. Running upgrade and bouncing pods"
-    helm upgrade --timeout 60m ci-{{INSTANCE}} processmaker/enterprise --version ${versionHelm}
+    APP_VERSION=$(echo "$CI_PROJECT-$CI_PACKAGE_BRANCH" | sed "s;/;-;g" | sed "s/refs-heads-//g")
+    helm upgrade --timeout 60m -f .github/templates/instance.yaml ci-{{INSTANCE}} processmaker/enterprise \
+        $(helm_common_sets) \
+        --version ${versionHelm}
     
     #Bounce pods
     webPod=$(kubectl get pods -n ci-{{INSTANCE}}-ns-pm4|grep web|awk '{print $1}')

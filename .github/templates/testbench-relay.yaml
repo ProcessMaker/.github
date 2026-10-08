@@ -1,0 +1,14 @@
+# Overlay for testbench jobs only (helm upgrade --reuse-values -f this file).
+# Do not enable relay on default CI deploy.
+testbenchRunnerRelay:
+  enable: true
+  upstreamHost: tb-ci-{{INSTANCE}}
+  forwards:
+    - name: smtp
+      listen: 587
+      upstream: 587
+      protocol: tcp
+    - name: imaps
+      listen: 993
+      upstream: 993
+      protocol: tcp
