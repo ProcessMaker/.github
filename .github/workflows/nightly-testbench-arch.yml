@@ -158,6 +158,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           OCTANE: ${{ env.OCTANE }}
           MULTITENANCY: ${{ env.MULTITENANCY }}
+          TESTBENCH_SERVICES_ENABLE: "true"
           CI_PROJECT: processmaker
           CI_PACKAGE_BRANCH: develop
         run: |
@@ -208,10 +209,11 @@ jobs:
           SITE_NAME: CI
           INSTANCE_PASSWORD: ${{ secrets.CI_INSTANCE_PASSWORD }}
           CONTEXT_PATH: ./context
-          TCP_TUNNELS: "mailserver:587 mailserver:993"
+          TESTBENCH_SERVICES_MODE: cluster
         run: |
           instance="${{ needs.deploy.outputs.instance }}"
           tenant="${{ matrix.tenant }}"
+          export TESTBENCH_INSTANCE="$instance"
           echo "INSTANCE: $instance"
           echo "TENANT: $tenant"
           if [ "$tenant" = "single" ]; then
@@ -221,8 +223,8 @@ jobs:
           fi
           echo "URL: $URL"
           export USER_GROUP="$(id -u):$(id -g)"
-          chmod +x ./start.sh
-          ./start.sh
+          chmod +x ./start.sh ./scripts/port-forward-services.sh
+          ./start.sh --cluster-services
 
       - name: Upload Playwright report
         if: always()

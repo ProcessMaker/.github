@@ -2,13 +2,37 @@
 
 current_datetime=$(echo -n ${CURRENT_DATE} | md5sum | head -c 10)
 echo "NAMESPACE : ci-{{INSTANCE}}-ns-pm4"
-helm repo add processmaker ${HELM_REPO} --username ${HELM_USERNAME} --password ${HELM_PASSWORD} && helm repo update
+
+TESTBENCH_SERVICES_ENABLE="${TESTBENCH_SERVICES_ENABLE:-false}"
+
+helm_repo_update() {
+  helm repo add processmaker "${HELM_REPO}" --username "${HELM_USERNAME}" --password "${HELM_PASSWORD}" && helm repo update
+}
+
+helm_deploy_sets() {
+  APP_VERSION=$(echo "$CI_PROJECT-$CI_PACKAGE_BRANCH" | sed "s;/;-;g" | sed "s/refs-heads-//g")
+
+  helm "$1" --timeout "${2}" -f .github/templates/instance.yaml ci-{{INSTANCE}} processmaker/enterprise \
+    --set deploy.web.octane.enable="${OCTANE}" \
+    --set deploy.pmai.openaiApiKey="${OPENAI_API_KEY}" \
+    --set analytics.awsAccessKey="${ANALYTICS_AWS_ACCESS_KEY}" \
+    --set analytics.awsSecretKey="${ANALYTICS_AWS_SECRET_KEY}" \
+    --set dockerRegistry.password="${REGISTRY_PASSWORD}" \
+    --set dockerRegistry.url="${REGISTRY_HOST}" \
+    --set dockerRegistry.username="${REGISTRY_USERNAME}" \
+    --set twilio.sid="${TWILIO_SID}" \
+    --set twilio.token="${TWILIO_TOKEN}" \
+    --set appVersion="${APP_VERSION}" \
+    --set testbenchServices.enable="${TESTBENCH_SERVICES_ENABLE}" \
+    --version "${versionHelm}"
+}
+
+helm_repo_update
 
 if ! kubectl get namespace/ci-{{INSTANCE}}-ns-pm4 >/dev/null 2>&1; then
     echo "New instance. Creating Namespace"
     kubectl create namespace ci-{{INSTANCE}}-ns-pm4
     echo "Creating DB"
-    # Use admin password from secrets
     echo "Update instance yamls"
     echo "Creating DB :: pm4_ci-{{INSTANCE}}"
     cat .github/templates/db.yaml
@@ -29,27 +53,20 @@ if ! kubectl get namespace/ci-{{INSTANCE}}-ns-pm4 >/dev/null 2>&1; then
     kubectl delete job mysql-setup-job-ci-{{INSTANCE}}
     echo "Deploying Instance :: ci-{{INSTANCE}}"
     echo "OCTANE: ${OCTANE}"
+    echo "TESTBENCH_SERVICES_ENABLE: ${TESTBENCH_SERVICES_ENABLE}"
     cat .github/templates/instance.yaml
-    # Evaluate the command and store the result
-    APP_VERSION=$(echo "$CI_PROJECT-$CI_PACKAGE_BRANCH" | sed "s;/;-;g" | sed "s/refs-heads-//g")
 
-    helm install --timeout 75m -f .github/templates/instance.yaml ci-{{INSTANCE}} processmaker/enterprise \
-        --set deploy.web.octane.enable=${OCTANE} \
-        --set deploy.pmai.openaiApiKey=${OPENAI_API_KEY} \
-        --set analytics.awsAccessKey=${ANALYTICS_AWS_ACCESS_KEY} \
-        --set analytics.awsSecretKey=${ANALYTICS_AWS_SECRET_KEY} \
-        --set dockerRegistry.password=${REGISTRY_PASSWORD} \
-        --set dockerRegistry.url=${REGISTRY_HOST} \
-        --set dockerRegistry.username=${REGISTRY_USERNAME} \
-        --set twilio.sid=${TWILIO_SID} \
-        --set twilio.token=${TWILIO_TOKEN} \
-        --set appVersion=${APP_VERSION} \
-        --version ${versionHelm}
+    helm_deploy_sets install 75m
 else
     echo "Instance exists. Running upgrade and bouncing pods"
-    helm upgrade --timeout 60m ci-{{INSTANCE}} processmaker/enterprise --version ${versionHelm}
+    echo "TESTBENCH_SERVICES_ENABLE: ${TESTBENCH_SERVICES_ENABLE}"
+
+    helm_deploy_sets upgrade 60m
+
+    if [ "${TESTBENCH_SERVICES_ENABLE}" = "true" ]; then
+      kubectl rollout status deployment/ci-{{INSTANCE}}-testbench-services -n ci-{{INSTANCE}}-ns-pm4 --timeout=300s || true
+    fi
     
-    #Bounce pods
     webPod=$(kubectl get pods -n ci-{{INSTANCE}}-ns-pm4|grep web|awk '{print $1}')
     schedulerPod=$(kubectl get pods -n ci-{{INSTANCE}}-ns-pm4|grep scheduler|awk '{print $1}')
     queuePod=$(kubectl get pods -n ci-{{INSTANCE}}-ns-pm4|grep queue|awk '{print $1}')

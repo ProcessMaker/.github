@@ -235,6 +235,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           OCTANE: ${{ env.OCTANE }}
+          TESTBENCH_SERVICES_ENABLE: ${{ contains(github.event.pull_request.body, 'ci:run-testbench') && 'true' || 'false' }}
         run: |
           instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
           echo "INSTANCE: $instance"
@@ -377,10 +378,11 @@ jobs:
           SITE_NAME: CI
           INSTANCE_PASSWORD: ${{ secrets.CI_INSTANCE_PASSWORD }}
           CONTEXT_PATH: ./context
-          TCP_TUNNELS: "mailserver:587 mailserver:993"
+          TESTBENCH_SERVICES_MODE: cluster
         run: |
           instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
           echo "INSTANCE: $instance"
+          export TESTBENCH_INSTANCE="$instance"
           if [ "${{ env.MULTITENANCY }}" = "true" ]; then
             export URL="https://tenant-1.ci-$instance.engk8s.processmaker.net"
           else
@@ -388,8 +390,8 @@ jobs:
           fi
           echo "URL: $URL"
           export USER_GROUP="$(id -u):$(id -g)"
-          chmod +x ./start.sh
-          ./start.sh
+          chmod +x ./start.sh ./scripts/port-forward-services.sh
+          ./start.sh --cluster-services
 
   deleteEKS:
     name: Delete Instance
