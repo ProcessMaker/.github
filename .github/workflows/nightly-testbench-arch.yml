@@ -249,6 +249,7 @@ jobs:
           USE_RUNNER_RELAY: "true"
           USE_TUNNEL: "false"
           TAILSCALE_AUTH_KEY_CI_RUNNER: ${{ secrets.TAILSCALE_AUTH_KEY_CI_RUNNER }}
+          VERIFY_TESTBENCH_RELAY_SCRIPT: ${{ github.workspace }}/dot-github/.github/scripts/verify-testbench-relay.sh
         run: |
           instance="${{ needs.deploy.outputs.instance }}"
           export INSTANCE="$instance"
