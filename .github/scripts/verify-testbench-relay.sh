@@ -16,8 +16,8 @@ UPSTREAM_HOST="tb-ci-${INSTANCE}"
 RELAY_SVC="${RELEASE}-testbench-relay"
 NC_TIMEOUT_SEC="${RELAY_NC_TIMEOUT_SEC:-5}"
 # Allow MagicDNS / DERP / HAProxy health to settle after runner joins / relay restart.
-WAIT_SEC="${RELAY_VERIFY_WAIT_SEC:-90}"
-POLL_SEC="${RELAY_VERIFY_POLL_SEC:-5}"
+WAIT_SEC="${RELAY_VERIFY_WAIT_SEC:-120}"
+POLL_SEC="${RELAY_VERIFY_POLL_SEC:-15}"
 ROLLOUT_TIMEOUT_SEC="${RELAY_ROLLOUT_TIMEOUT_SEC:-180}"
 
 if ! command -v kubectl >/dev/null 2>&1; then

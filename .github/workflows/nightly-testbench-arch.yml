@@ -261,7 +261,6 @@ jobs:
           INSTANCE_PASSWORD: ${{ secrets.CI_INSTANCE_PASSWORD }}
           CONTEXT_PATH: ./context
           USE_RUNNER_RELAY: "true"
-          USE_TUNNEL: "false"
           TAILSCALE_AUTH_KEY_CI_RUNNER: ${{ secrets.TAILSCALE_AUTH_KEY_CI_RUNNER }}
           TAILSCALE_API_KEY_CI: ${{ secrets.TAILSCALE_API_KEY_CI }}
           VERIFY_TESTBENCH_RELAY_SCRIPT: ${{ github.workspace }}/dot-github/.github/scripts/verify-testbench-relay.sh
