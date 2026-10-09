@@ -389,6 +389,29 @@ jobs:
       - name: Authenticate with Amazon EKS
         run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
 
+      - name: Checkout testbench
+        uses: actions/checkout@v4
+        with:
+          repository: ProcessMaker/testbench
+          # Pin to feature branch until relay-capable start.sh lands on main.
+          ref: task/FOUR-33523-B
+          path: testbench
+          token: ${{ secrets.GIT_TOKEN }}
+
+      # Must run before enable-testbench-relay so new relay/runner reclaim stable hostnames.
+      - name: Cleanup stale Tailscale CI nodes
+        working-directory: testbench
+        env:
+          TAILSCALE_API_KEY_CI: ${{ secrets.TAILSCALE_API_KEY_CI }}
+        run: |
+          instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
+          if [ -z "${TAILSCALE_API_KEY_CI}" ]; then
+            echo "ERROR: org secret TAILSCALE_API_KEY_CI is required (Tailscale API access token tskey-api-…)"
+            exit 1
+          fi
+          npm ci
+          npx tsx src/index.ts cleanup-tailscale --instance "$instance" --targets all
+
       - name: Enable testbench runner relay
         working-directory: dot-github
         env:
@@ -401,15 +424,6 @@ jobs:
           chmod +x .github/scripts/enable-testbench-relay.sh
           .github/scripts/enable-testbench-relay.sh "$instance"
 
-      - name: Checkout testbench
-        uses: actions/checkout@v4
-        with:
-          repository: ProcessMaker/testbench
-          # Pin to feature branch until relay-capable start.sh lands on main.
-          ref: task/FOUR-33523-B
-          path: testbench
-          token: ${{ secrets.GIT_TOKEN }}
-
       - name: Run testbench
         working-directory: testbench
         env:
@@ -419,6 +433,7 @@ jobs:
           USE_RUNNER_RELAY: "true"
           USE_TUNNEL: "false"
           TAILSCALE_AUTH_KEY_CI_RUNNER: ${{ secrets.TAILSCALE_AUTH_KEY_CI_RUNNER }}
+          TAILSCALE_API_KEY_CI: ${{ secrets.TAILSCALE_API_KEY_CI }}
           VERIFY_TESTBENCH_RELAY_SCRIPT: ${{ github.workspace }}/dot-github/.github/scripts/verify-testbench-relay.sh
         run: |
           instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)

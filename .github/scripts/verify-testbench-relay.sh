@@ -74,7 +74,7 @@ for p in (d.get('Peer') or {}).values():
   echo "Hints:"
   echo "  - Confirm Tailscale ACL allows tag:ci-relay -> tag:ci-runner:587 and :993"
   echo "  - Confirm runner auth key has tag:ci-runner and relay key has tag:ci-relay"
-  echo "  - Confirm runner hostname is ${UPSTREAM_HOST} (TS_HOSTNAME / start.sh)"
+  echo "  - Confirm runner hostname is ${UPSTREAM_HOST} (not ${UPSTREAM_HOST}-1); use TAILSCALE_API_KEY_CI cleanup"
   echo "  - HAProxy 'no server available' / stale IP: relay must restart after runner joins"
   echo "  - Exit 137 on relay often means OOM; check memory limits"
   echo "===================================================="
