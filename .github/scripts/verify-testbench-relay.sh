@@ -1,6 +1,10 @@
 #!/bin/bash
 # Fail-fast: prove PM → in-cluster relay → Tailscale → runner mail ports.
 # Run after the runner has joined the tailnet as tb-ci-<INSTANCE> (start.sh).
+#
+# Restarts the relay Deployment first so HAProxy/MagicDNS pick up the current
+# ephemeral runner IP (same hostname tb-ci-* can point at a dead peer from a
+# previous testbench run if the relay pod was left running).
 set -euo pipefail
 
 INSTANCE="${1:?INSTANCE id required (e.g. nt-amd64 or 10-char md5)}"
@@ -11,9 +15,10 @@ WEB_DEPLOY="deploy/${RELEASE}-processmaker-web"
 UPSTREAM_HOST="tb-ci-${INSTANCE}"
 RELAY_SVC="${RELEASE}-testbench-relay"
 NC_TIMEOUT_SEC="${RELAY_NC_TIMEOUT_SEC:-5}"
-# Allow MagicDNS / DERP / HAProxy health to settle after runner joins.
+# Allow MagicDNS / DERP / HAProxy health to settle after runner joins / relay restart.
 WAIT_SEC="${RELAY_VERIFY_WAIT_SEC:-90}"
 POLL_SEC="${RELAY_VERIFY_POLL_SEC:-5}"
+ROLLOUT_TIMEOUT_SEC="${RELAY_ROLLOUT_TIMEOUT_SEC:-180}"
 
 if ! command -v kubectl >/dev/null 2>&1; then
   echo "kubectl is required to verify the testbench runner relay"
@@ -70,6 +75,7 @@ for p in (d.get('Peer') or {}).values():
   echo "  - Confirm Tailscale ACL allows tag:ci-relay -> tag:ci-runner:587 and :993"
   echo "  - Confirm runner auth key has tag:ci-runner and relay key has tag:ci-relay"
   echo "  - Confirm runner hostname is ${UPSTREAM_HOST} (TS_HOSTNAME / start.sh)"
+  echo "  - HAProxy 'no server available' / stale IP: relay must restart after runner joins"
   echo "  - Exit 137 on relay often means OOM; check memory limits"
   echo "===================================================="
 }
@@ -78,6 +84,14 @@ echo "Verifying testbench runner relay path for ${RELEASE} (upstream ${UPSTREAM_
 
 if ! kubectl get "${RELAY_DEPLOY}" -n "${NAMESPACE}" >/dev/null 2>&1; then
   echo "Relay deployment not found: ${RELAY_DEPLOY} in ${NAMESPACE}"
+  dump_diagnostics
+  exit 1
+fi
+
+echo "--- restart relay (refresh HAProxy upstream for ${UPSTREAM_HOST}) ---"
+kubectl rollout restart "${RELAY_DEPLOY}" -n "${NAMESPACE}"
+if ! kubectl rollout status "${RELAY_DEPLOY}" -n "${NAMESPACE}" --timeout="${ROLLOUT_TIMEOUT_SEC}s"; then
+  echo "FAIL: relay rollout after restart did not complete"
   dump_diagnostics
   exit 1
 fi
