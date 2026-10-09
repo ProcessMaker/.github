@@ -18,8 +18,10 @@ helm repo add processmaker "${HELM_REPO}" --username "${HELM_USERNAME}" --passwo
 helm repo update
 
 echo "Disabling testbench runner relay for release ${RELEASE}..."
+# --no-hooks: relay-only change; skip post-upgrade update-pm4 (and other hooks).
 helm upgrade --timeout 10m "${RELEASE}" processmaker/enterprise \
   --reuse-values \
+  --no-hooks \
   --set testbenchRunnerRelay.enable=false \
   --set testbenchRunnerRelay.tailscale.authKey= \
   --version "${versionHelm}"
