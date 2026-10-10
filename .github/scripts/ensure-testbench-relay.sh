@@ -11,7 +11,6 @@ RELAY_DEPLOY="deploy/${DEPLOYMENT}"
 CONFIGMAP="${RELEASE}-testbench-runner-relay"
 SECRET="${RELEASE}-testbench-relay-tailscale"
 UPSTREAM_HOST="tb-ci-${INSTANCE}"
-ROLLOUT_TIMEOUT_SEC="${RELAY_ROLLOUT_TIMEOUT_SEC:-180}"
 RELAY_HAPROXY_CHECK_INTER="${RELAY_HAPROXY_CHECK_INTER:-60s}"
 
 if ! command -v kubectl >/dev/null 2>&1; then
@@ -35,6 +34,12 @@ if kubectl get configmap "${CONFIGMAP}" -n "${NAMESPACE}" >/dev/null 2>&1; then
   patched_cfg="$(printf '%s' "${haproxy_cfg}" \
     | sed -E "s/server runner [^:]+:/server runner ${UPSTREAM_HOST}:/g" \
     | sed -E "s/check inter [0-9]+[smhd]+/check inter ${RELAY_HAPROXY_CHECK_INTER}/g")"
+  if ! printf '%s' "${patched_cfg}" | grep -q 'hard-stop-after'; then
+    patched_cfg="$(printf '%s' "${patched_cfg}" | awk '
+      /^[[:space:]]*maxconn / { print; print "      hard-stop-after 5s"; next }
+      { print }
+    ')"
+  fi
   if [ "${patched_cfg}" = "${haproxy_cfg}" ]; then
     echo "ConfigMap upstream (${UPSTREAM_HOST}) and health check interval (${RELAY_HAPROXY_CHECK_INTER}) already set."
   else
@@ -60,13 +65,51 @@ if [ -n "${TAILSCALE_AUTH_KEY_CI_RELAY:-}" ]; then
   fi
 fi
 
-echo "Restarting relay deployment (refresh HAProxy / MagicDNS for ${UPSTREAM_HOST})..."
-kubectl rollout restart "${RELAY_DEPLOY}" -n "${NAMESPACE}"
-if ! kubectl rollout status "${RELAY_DEPLOY}" -n "${NAMESPACE}" --timeout="${ROLLOUT_TIMEOUT_SEC}s"; then
-  echo "Relay rollout failed after restart."
-  kubectl get pods -n "${NAMESPACE}" -l service=testbench-runner-relay -o wide || true
-  kubectl logs -n "${NAMESPACE}" -l service=testbench-runner-relay --tail=100 || true
-  exit 1
-fi
+echo "Applying fast relay rollout settings (Recreate strategy, exec probes, grace period)..."
+# Null tcpSocket so JSON merge patch does not leave a stale port probe that
+# proxies through HAProxy to the runner mailserver on every kubelet tick.
+kubectl patch "${RELAY_DEPLOY}" -n "${NAMESPACE}" --type=merge -p "$(cat <<'EOF'
+{
+  "spec": {
+    "strategy": {"type": "Recreate"},
+    "template": {
+      "spec": {
+        "terminationGracePeriodSeconds": 10,
+        "containers": [{
+          "name": "relay",
+          "readinessProbe": {
+            "tcpSocket": null,
+            "httpGet": null,
+            "exec": {
+              "command": [
+                "/bin/sh",
+                "-c",
+                "tailscale --socket=/var/run/tailscale/tailscaled.sock status >/dev/null 2>&1"
+              ]
+            },
+            "initialDelaySeconds": 3,
+            "periodSeconds": 5,
+            "failureThreshold": 20
+          },
+          "livenessProbe": {
+            "tcpSocket": null,
+            "httpGet": null,
+            "exec": {
+              "command": [
+                "/bin/sh",
+                "-c",
+                "tailscale --socket=/var/run/tailscale/tailscaled.sock status >/dev/null 2>&1"
+              ]
+            },
+            "initialDelaySeconds": 15,
+            "periodSeconds": 15
+          }
+        }]
+      }
+    }
+  }
+}
+EOF
+)" || echo "WARNING: could not patch relay deployment rollout settings"
 
-echo "Testbench runner relay is ready for runner ${UPSTREAM_HOST}."
+echo "Relay prepare complete (ConfigMap / deploy settings). verify-testbench-relay.sh restarts after the runner joins."
