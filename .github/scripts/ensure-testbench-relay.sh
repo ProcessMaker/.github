@@ -66,49 +66,31 @@ if [ -n "${TAILSCALE_AUTH_KEY_CI_RELAY:-}" ]; then
 fi
 
 echo "Applying fast relay rollout settings (Recreate strategy, exec probes, grace period)..."
-# Null tcpSocket so JSON merge patch does not leave a stale port probe that
-# proxies through HAProxy to the runner mailserver on every kubelet tick.
-kubectl patch "${RELAY_DEPLOY}" -n "${NAMESPACE}" --type=merge -p "$(cat <<'EOF'
-{
-  "spec": {
-    "strategy": {"type": "Recreate"},
-    "template": {
-      "spec": {
-        "terminationGracePeriodSeconds": 10,
-        "containers": [{
-          "name": "relay",
-          "readinessProbe": {
-            "tcpSocket": null,
-            "httpGet": null,
-            "exec": {
-              "command": [
-                "/bin/sh",
-                "-c",
-                "tailscale --socket=/var/run/tailscale/tailscaled.sock status >/dev/null 2>&1"
-              ]
-            },
-            "initialDelaySeconds": 3,
-            "periodSeconds": 5,
-            "failureThreshold": 20
-          },
-          "livenessProbe": {
-            "tcpSocket": null,
-            "httpGet": null,
-            "exec": {
-              "command": [
-                "/bin/sh",
-                "-c",
-                "tailscale --socket=/var/run/tailscale/tailscaled.sock status >/dev/null 2>&1"
-              ]
-            },
-            "initialDelaySeconds": 15,
-            "periodSeconds": 15
-          }
-        }]
-      }
-    }
-  }
-}
+# JSON patch (not --type=merge): merge patch replaces the entire containers[]
+# array and drops required fields like image.
+# Replace whole probes so a prior tcpSocket handler cannot remain beside exec.
+TS_PROBE='tailscale --socket=/var/run/tailscale/tailscaled.sock status >/dev/null 2>&1'
+grace_op="add"
+if kubectl get "${RELAY_DEPLOY}" -n "${NAMESPACE}" \
+  -o jsonpath='{.spec.template.spec.terminationGracePeriodSeconds}' 2>/dev/null | grep -q '[0-9]'; then
+  grace_op="replace"
+fi
+kubectl patch "${RELAY_DEPLOY}" -n "${NAMESPACE}" --type=json -p "$(cat <<EOF
+[
+  {"op": "replace", "path": "/spec/strategy", "value": {"type": "Recreate"}},
+  {"op": "${grace_op}", "path": "/spec/template/spec/terminationGracePeriodSeconds", "value": 10},
+  {"op": "replace", "path": "/spec/template/spec/containers/0/readinessProbe", "value": {
+    "exec": {"command": ["/bin/sh", "-c", "${TS_PROBE}"]},
+    "initialDelaySeconds": 3,
+    "periodSeconds": 5,
+    "failureThreshold": 20
+  }},
+  {"op": "replace", "path": "/spec/template/spec/containers/0/livenessProbe", "value": {
+    "exec": {"command": ["/bin/sh", "-c", "${TS_PROBE}"]},
+    "initialDelaySeconds": 15,
+    "periodSeconds": 15
+  }}
+]
 EOF
 )" || echo "WARNING: could not patch relay deployment rollout settings"
 
