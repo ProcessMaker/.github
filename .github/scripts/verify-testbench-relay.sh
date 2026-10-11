@@ -96,18 +96,35 @@ if ! kubectl rollout status "${RELAY_DEPLOY}" -n "${NAMESPACE}" --timeout="${ROL
   exit 1
 fi
 
-echo "--- web -> ${RELAY_SVC}:587 ---"
-if ! kubectl exec -n "${NAMESPACE}" "${WEB_DEPLOY}" -c pm4-app-ui -- \
-  sh -c "timeout ${NC_TIMEOUT_SEC} nc -zv ${RELAY_SVC} 587"; then
-  echo "FAIL: web pod cannot reach relay Service :587"
-  dump_diagnostics
-  exit 1
-fi
+# HAProxy may still be binding after the pod becomes Ready (esp. while Tailscale
+# finishes login). Retry cluster-local probes with the same settle window.
+deadline=$((SECONDS + WAIT_SEC))
+attempt=0
+web_ok=false
+while true; do
+  attempt=$((attempt + 1))
+  echo "--- web -> ${RELAY_SVC}:587 (attempt ${attempt}, ${NC_TIMEOUT_SEC}s) ---"
+  if kubectl exec -n "${NAMESPACE}" "${WEB_DEPLOY}" -c pm4-app-ui -- \
+    sh -c "timeout ${NC_TIMEOUT_SEC} nc -zv ${RELAY_SVC} 587"; then
+    echo "--- web -> ${RELAY_SVC}:993 ---"
+    if kubectl exec -n "${NAMESPACE}" "${WEB_DEPLOY}" -c pm4-app-ui -- \
+      sh -c "timeout ${NC_TIMEOUT_SEC} nc -zv ${RELAY_SVC} 993"; then
+      web_ok=true
+      break
+    fi
+    echo "SMTP OK but IMAP :993 failed; will retry if time remains..."
+  else
+    echo "web -> relay :587 not reachable yet..."
+  fi
 
-echo "--- web -> ${RELAY_SVC}:993 ---"
-if ! kubectl exec -n "${NAMESPACE}" "${WEB_DEPLOY}" -c pm4-app-ui -- \
-  sh -c "timeout ${NC_TIMEOUT_SEC} nc -zv ${RELAY_SVC} 993"; then
-  echo "FAIL: web pod cannot reach relay Service :993"
+  if [ "${SECONDS}" -ge "${deadline}" ]; then
+    break
+  fi
+  sleep "${POLL_SEC}"
+done
+
+if [ "${web_ok}" != "true" ]; then
+  echo "FAIL: web pod cannot reach relay Service :587/:993 within ${WAIT_SEC}s"
   dump_diagnostics
   exit 1
 fi
