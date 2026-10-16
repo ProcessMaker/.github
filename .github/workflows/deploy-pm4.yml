@@ -611,7 +611,8 @@ jobs:
       !cancelled() &&
       needs.imageEKS.result == 'success' &&
       github.event.action != 'closed' &&
-      inputs.delete == ''
+      inputs.delete == '' &&
+      !contains(github.event.pull_request.body, 'ci:skip-phpunit')
     needs: imageEKS
     runs-on: ${{ vars.RUNNER }}
     timeout-minutes: 150
