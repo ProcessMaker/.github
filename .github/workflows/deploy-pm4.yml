@@ -488,96 +488,39 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
-      - name: Delete instance EKS
-        run: |           
-          set +e
-          FAILED=0
+      - name: Checkout .github repo
+        uses: actions/checkout@v4
+        with:
+          repository: processmaker/.github
+          ref: main
 
-          # If inputs.delete does not equal '', set the IMAGE_TAG to the value of inputs.delete
+      - name: Delete instance EKS
+        env:
+          USER_MYSQL_ENG: ${{ secrets.USER_MYSQL_ENG }}
+          PASS_MYSQL_ENG: ${{ secrets.PASS_MYSQL_ENG }}
+          RDS_ENG: ${{ secrets.RDS_ENG }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+          REGISTRY_HOST: ${{ secrets.REGISTRY_HOST }}
+        run: |
+          set +e
           if [ "${{ inputs.delete }}" != "" ]; then
             IMAGE_TAG=${{ inputs.delete }}
           else
             IMAGE_TAG=${{ env.IMAGE_TAG }}
           fi
-          INSTANCE=$(echo -n $IMAGE_TAG | md5sum | head -c 10)
+          export INSTANCE=$(echo -n "$IMAGE_TAG" | md5sum | head -c 10)
+          export IMAGE_TAG
 
-          # Delete Harbor image only on PR close / manual delete — not on ci:redeploy
-          DELETE_HARBOR=false
           if [ "${{ github.event.action }}" = "closed" ] || [ "${{ inputs.delete }}" != "" ]; then
-            DELETE_HARBOR=true
-          fi
-
-          if kubectl get namespace/ci-$INSTANCE-ns-pm4 ; then
-            echo "Deleting Instance :: ci-$INSTANCE"
-            helm delete ci-$INSTANCE || true
-            kubectl delete namespace ci-$INSTANCE-ns-pm4 || true
-       
-            #Drop database
-            deploy_db="pm4_ci-${INSTANCE}%"
-            deploy_ai="\`pm4_ci-$INSTANCE_ai\`"
-
-            # check that that string length of $deploy_db is 12 or more as a safety check. If its less than 12, exit now
-            if [ ${#deploy_db} -lt 12 ]; then
-              echo "ERROR: deploy_db safety check failed (length ${#deploy_db})"
-              exit 1
-            fi
-
-            # Drop the main database including any tenant databases.
-            # Continue on failure so a half-built instance still gets cleaned up.
-            set -o pipefail
-            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -h ${{ secrets.RDS_ENG }} -N -e "SHOW DATABASES LIKE '${deploy_db}'" | xargs -r -I{} mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -h ${{ secrets.RDS_ENG }} -e "DROP DATABASE IF EXISTS \`{}\`;"
-            if [ $? -ne 0 ]; then
-              echo "WARN: Failed dropping databases matching ${deploy_db}"
-              FAILED=1
-            fi
-            set +o pipefail
-
-            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP DATABASE IF EXISTS $deploy_ai" -h ${{ secrets.RDS_ENG }}
-            if [ $? -ne 0 ]; then
-              echo "WARN: Failed dropping AI database $deploy_ai"
-              FAILED=1
-            fi
-
-            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP USER IF EXISTS 'user_ci-$INSTANCE'@'%'" -h ${{ secrets.RDS_ENG }}
-            if [ $? -ne 0 ]; then
-              echo "WARN: Failed dropping user user_ci-$INSTANCE"
-              FAILED=1
-            fi
-
-            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP USER IF EXISTS 'user_ci-$INSTANCE_ai'@'%'" -h ${{ secrets.RDS_ENG }}
-            if [ $? -ne 0 ]; then
-              echo "WARN: Failed dropping user user_ci-$INSTANCE_ai"
-              FAILED=1
-            fi
-
-            echo "The instance [https://ci-$INSTANCE.engk8s.processmaker.net] was deleted!!"
+            export DELETE_HARBOR=true
           else
-            echo "The pull request does not have an instance on K8s [https://ci-$INSTANCE.engk8s.processmaker.net] not found!!"
+            export DELETE_HARBOR=false
           fi
 
-          if [ "$DELETE_HARBOR" = "true" ]; then
-            echo "Deleting image from Harbor: ${IMAGE_TAG}"
-            HTTP_CODE=$(curl -s -o /tmp/harbor_delete_out -w "%{http_code}" -X DELETE \
-              -u ${{ secrets.REGISTRY_USERNAME }}:${{ secrets.REGISTRY_PASSWORD }} \
-              "https://${{ secrets.REGISTRY_HOST }}/api/v2.0/projects/processmaker/repositories/enterprise/artifacts/${IMAGE_TAG}")
-            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-              echo "Harbor image deleted (HTTP $HTTP_CODE)"
-            elif [ "$HTTP_CODE" = "404" ]; then
-              echo "Harbor image not found (already deleted)"
-            else
-              echo "WARN: Failed deleting Harbor image ${IMAGE_TAG} (HTTP $HTTP_CODE)"
-              cat /tmp/harbor_delete_out || true
-              FAILED=1
-            fi
-          else
-            echo "Skipping Harbor image delete (ci:redeploy)"
-          fi
-
-          if [ "$FAILED" -ne 0 ]; then
-            echo "One or more delete operations failed"
-            exit 1
-          fi
-          echo "Delete completed successfully"
+          echo "INSTANCE=${INSTANCE}"
+          chmod +x .github/scripts/delete-instance.sh
+          bash .github/scripts/delete-instance.sh
 
       # Strip ci:redeploy from the PR body so it does not re-trigger on later edits.
       # Uses github.token (default) so this edit does not start a new workflow run.
