@@ -42,6 +42,9 @@ runs:
         fi
 
         echo "*** k8s Branch: $k8s_branch ***"
-        git clone --depth 1 -b "$k8s_branch" "https://${{ inputs.token }}@github.com/ProcessMaker/pm4-k8s-distribution.git" pm4-k8s-distribution
+        # Use x-access-token and omit the .git suffix so credentials survive GitHub's
+        # HTTPS redirect (.git -> .git/). Embedded user:token alone can be stripped
+        # on redirect, which fails non-interactively with "could not read Username".
+        git clone --depth 1 -b "$k8s_branch" "https://x-access-token:${{ inputs.token }}@github.com/ProcessMaker/pm4-k8s-distribution" pm4-k8s-distribution
         echo "versionHelm=$(grep "version:" "pm4-k8s-distribution/charts/enterprise/Chart.yaml" | awk '{print $2}' | sed 's/\"//g')" >> $GITHUB_ENV
       shell: bash
