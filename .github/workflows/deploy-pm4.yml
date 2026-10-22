@@ -207,7 +207,22 @@ jobs:
 
       - name: Authenticate with Amazon EKS
         run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
-      
+
+      - name: Resolve instance id
+        id: instance
+        run: |
+          instance=$(echo -n "${{ env.IMAGE_TAG }}" | md5sum | head -c 10)
+          echo "instance=${instance}" >> "$GITHUB_OUTPUT"
+          echo "INSTANCE: ${instance}"
+
+      # Restored before helm install so cert-manager does not re-hit Let's Encrypt.
+      # Missing artifact is normal when deleteEKS was skipped or had no usable cert.
+      - name: Download stashed TLS secret
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-tls-${{ steps.instance.outputs.instance }}
+          path: ${{ runner.temp }}/ci-tls
       
       - name: Deploy instance EKS
         env:
@@ -235,8 +250,9 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           OCTANE: ${{ env.OCTANE }}
+          TLS_SECRET_DIR: ${{ runner.temp }}/ci-tls
         run: |
-          instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
+          instance="${{ steps.instance.outputs.instance }}"
           echo "INSTANCE: $instance"
           echo "IMAGE_TAG: $IMAGE_TAG"
           
@@ -260,7 +276,7 @@ jobs:
           cat .github/templates/instance.yaml
           echo "=== Checking db.yaml after replacements ==="
           cat .github/templates/db.yaml
-          chmod +x .github/scripts/deploy-instance.sh
+          chmod +x .github/scripts/deploy-instance.sh .github/scripts/restore-tls-secret.sh
           bash .github/scripts/deploy-instance.sh
           fi
           if [ "$MULTITENANCY" = "true" ]; then
@@ -495,6 +511,7 @@ jobs:
           ref: main
 
       - name: Delete instance EKS
+        id: delete_instance
         env:
           USER_MYSQL_ENG: ${{ secrets.USER_MYSQL_ENG }}
           PASS_MYSQL_ENG: ${{ secrets.PASS_MYSQL_ENG }}
@@ -511,6 +528,7 @@ jobs:
           fi
           export INSTANCE=$(echo -n "$IMAGE_TAG" | md5sum | head -c 10)
           export IMAGE_TAG
+          echo "instance=${INSTANCE}" >> "$GITHUB_OUTPUT"
 
           if [ "${{ github.event.action }}" = "closed" ] || [ "${{ inputs.delete }}" != "" ]; then
             export DELETE_HARBOR=true
@@ -518,9 +536,30 @@ jobs:
             export DELETE_HARBOR=false
           fi
 
+          # On ci:redeploy, stash the LE TLS secret as a GHA artifact so deploy can
+          # restore it and avoid burning another Let's Encrypt issuance.
+          if [ "${{ github.event.action }}" != "closed" ] && [ "${{ inputs.delete }}" = "" ] && [[ "${{ github.event.pull_request.body }}" == *"ci:redeploy"* ]]; then
+            export PRESERVE_TLS_DIR="${RUNNER_TEMP}/ci-tls"
+          fi
+
           echo "INSTANCE=${INSTANCE}"
-          chmod +x .github/scripts/delete-instance.sh
+          chmod +x .github/scripts/delete-instance.sh .github/scripts/export-tls-secret.sh
           bash .github/scripts/delete-instance.sh
+
+          if [ -n "${PRESERVE_TLS_DIR:-}" ] && [ -f "${PRESERVE_TLS_DIR}/stashed" ]; then
+            echo "tls_stashed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tls_stashed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload stashed TLS secret
+        if: steps.delete_instance.outputs.tls_stashed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-tls-${{ steps.delete_instance.outputs.instance }}
+          path: ${{ runner.temp }}/ci-tls/
+          retention-days: 1
+          if-no-files-found: warn
 
       # Strip ci:redeploy from the PR body so it does not re-trigger on later edits.
       # Uses github.token (default) so this edit does not start a new workflow run.

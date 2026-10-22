@@ -18,9 +18,21 @@ helm_common_sets() {
     --set appVersion=${APP_VERSION}
 }
 
+# Optional: TLS_SECRET_DIR with a stashed LE cert from a prior delete (GHA artifact).
+# Restore before helm install so cert-manager does not burn a new Let's Encrypt issuance.
+restore_stashed_tls() {
+    if [ -z "${TLS_SECRET_DIR:-}" ]; then
+        return 0
+    fi
+    export INSTANCE="{{INSTANCE}}"
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    bash "${SCRIPT_DIR}/restore-tls-secret.sh"
+}
+
 if ! kubectl get namespace/ci-{{INSTANCE}}-ns-pm4 >/dev/null 2>&1; then
     echo "New instance. Creating Namespace"
     kubectl create namespace ci-{{INSTANCE}}-ns-pm4
+    restore_stashed_tls
     echo "Creating DB"
     # Use admin password from secrets
     echo "Update instance yamls"

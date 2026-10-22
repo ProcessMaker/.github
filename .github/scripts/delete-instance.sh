@@ -7,6 +7,8 @@
 #   DELETE_HARBOR     true to delete the Harbor artifact (default false)
 #   IMAGE_TAG         Harbor tag to delete when DELETE_HARBOR=true
 #   REGISTRY_USERNAME, REGISTRY_PASSWORD, REGISTRY_HOST
+#   PRESERVE_TLS_DIR  if set, export TLS secret here before wiping the namespace
+#                     (for GHA artifact restore on redeploy)
 set -u
 
 FAILED=0
@@ -21,6 +23,7 @@ NAMESPACE="ci-${INSTANCE}-ns-pm4"
 RELEASE="ci-${INSTANCE}"
 deploy_db="pm4_ci-${INSTANCE}%"
 deploy_ai="pm4_ci-${INSTANCE}_ai"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ ${#deploy_db} -lt 12 ]; then
   echo "ERROR: deploy_db safety check failed (length ${#deploy_db})"
@@ -28,6 +31,15 @@ if [ ${#deploy_db} -lt 12 ]; then
 fi
 
 set +e
+
+preserve_tls() {
+  if [ -z "${PRESERVE_TLS_DIR:-}" ]; then
+    return 0
+  fi
+  echo "Preserving TLS secret before delete (PRESERVE_TLS_DIR=${PRESERVE_TLS_DIR})"
+  # shellcheck disable=SC1091
+  bash "${SCRIPT_DIR}/export-tls-secret.sh"
+}
 
 delete_k8s() {
   if kubectl get "namespace/${NAMESPACE}" >/dev/null 2>&1; then
@@ -93,6 +105,7 @@ delete_rds() {
   return 0
 }
 
+preserve_tls
 delete_k8s
 delete_rds
 
