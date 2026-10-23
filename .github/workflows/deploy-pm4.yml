@@ -389,14 +389,17 @@ jobs:
         id: companion
         shell: bash
         run: |
-          # Keep testbench on the same branch name as this reusable workflow
-          # (e.g. task/FOUR-33523-B). Falls back to main for tags/SHAs.
-          wr='${{ github.workflow_ref }}'
+          # job_workflow_ref is the *called* reusable workflow (e.g. .github@task/FOUR-33523-B).
+          # github.workflow_ref is the *caller* (often refs/pull/N/merge) and must not be used here.
+          wr='${{ github.job_workflow_ref }}'
+          echo "job_workflow_ref=$wr"
           if [[ "$wr" == *@refs/heads/* ]]; then
-            echo "ref=${wr##*@refs/heads/}" >> "$GITHUB_OUTPUT"
+            ref="${wr##*@refs/heads/}"
           else
-            echo "ref=main" >> "$GITHUB_OUTPUT"
+            ref=main
           fi
+          echo "companion_ref=$ref"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout dot-github
         uses: actions/checkout@v4
