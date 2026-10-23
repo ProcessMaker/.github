@@ -388,14 +388,21 @@ jobs:
       - name: Resolve companion branch
         id: companion
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GIT_TOKEN }}
         run: |
-          # job_workflow_ref is the *called* reusable workflow (e.g. .github@task/FOUR-33523-B).
-          # github.workflow_ref is the *caller* (often refs/pull/N/merge) and must not be used here.
-          wr='${{ github.job_workflow_ref }}'
-          echo "job_workflow_ref=$wr"
-          if [[ "$wr" == *@refs/heads/* ]]; then
-            ref="${wr##*@refs/heads/}"
-          else
+          # Nested reusable workflows leave github.job_workflow_ref empty; job.workflow_sha
+          # is reliable. Map that SHA to a branch tip so testbench tracks the same series
+          # (e.g. task/FOUR-33523-B). Fall back to ci:k8s-branch, then main.
+          sha='${{ job.workflow_sha }}'
+          repo='${{ job.workflow_repository }}'
+          echo "workflow_sha=$sha repo=$repo"
+          ref="$(gh api "repos/${repo}/commits/${sha}/branches-where-head" --jq '.[0].name // empty' || true)"
+          if [ -z "$ref" ] && [[ "${CI_PR_BODY:-}" =~ ci:k8s-branch:([^[:space:]]+) ]]; then
+            ref="${BASH_REMATCH[1]}"
+            echo "branches-where-head empty; using ci:k8s-branch=$ref"
+          fi
+          if [ -z "$ref" ]; then
             ref=main
           fi
           echo "companion_ref=$ref"
