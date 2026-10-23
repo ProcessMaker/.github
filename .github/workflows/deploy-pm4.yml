@@ -78,7 +78,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          repository: processmaker/.github
+          # Match the reusable-workflow ref (e.g. task/FOUR-33523-B), not main.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
 
       - name: Common 
         uses: ./.github/actions/common
@@ -177,8 +179,9 @@ jobs:
       - name: Checkout .github repo
         uses: actions/checkout@v4
         with:
-          repository: processmaker/.github
-          ref: main
+          # Match the reusable-workflow ref (e.g. task/FOUR-33523-B), not main.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
 
       - name: Common 
         uses: ./.github/actions/common
@@ -299,7 +302,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          repository: processmaker/.github
+          # Match the reusable-workflow ref (e.g. task/FOUR-33523-B), not main.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
 
       - name: Common 
         uses: ./.github/actions/common
@@ -380,13 +385,25 @@ jobs:
       contains(github.event.pull_request.body, 'ci:run-testbench')
     runs-on: ${{ vars.RUNNER }}
     steps:
+      - name: Resolve companion branch
+        id: companion
+        shell: bash
+        run: |
+          # Keep testbench on the same branch name as this reusable workflow
+          # (e.g. task/FOUR-33523-B). Falls back to main for tags/SHAs.
+          wr='${{ github.workflow_ref }}'
+          if [[ "$wr" == *@refs/heads/* ]]; then
+            echo "ref=${wr##*@refs/heads/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=main" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout dot-github
         uses: actions/checkout@v4
         with:
-          repository: processmaker/.github
-          # Pin to feature branch until relay scripts land on main.
-          # uses: @sha only loads this workflow file; checkout still defaults to main.
-          ref: task/FOUR-33523-B
+          # Match the reusable-workflow ref (e.g. task/FOUR-33523-B), not main.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: dot-github
           token: ${{ secrets.GIT_TOKEN }}
 
@@ -409,8 +426,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ProcessMaker/testbench
-          # Pin to feature branch until relay-capable start.sh lands on main.
-          ref: task/FOUR-33523-B
+          ref: ${{ steps.companion.outputs.ref }}
           path: testbench
           token: ${{ secrets.GIT_TOKEN }}
 
@@ -507,8 +523,9 @@ jobs:
       - name: Checkout .github repo
         uses: actions/checkout@v4
         with:
-          repository: processmaker/.github
-          ref: main
+          # Match the reusable-workflow ref (e.g. task/FOUR-33523-B), not main.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
 
       - name: Delete instance EKS
         id: delete_instance
@@ -605,7 +622,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          repository: processmaker/.github
+          # Match the reusable-workflow ref (e.g. task/FOUR-33523-B), not main.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
 
       - name: Common 
         uses: ./.github/actions/common
