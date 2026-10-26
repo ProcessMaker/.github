@@ -227,7 +227,7 @@ jobs:
         run: |
           # Nested reusable workflows leave github.job_workflow_ref empty; job.workflow_sha
           # is reliable. Map that SHA to a branch tip so testbench tracks the same series
-          # (e.g. task/FOUR-33523-B). Fall back to main.
+          # (e.g. the calling feature branch). Fall back to main.
           sha='${{ job.workflow_sha }}'
           repo='${{ job.workflow_repository }}'
           echo "workflow_sha=$sha repo=$repo"
@@ -241,7 +241,7 @@ jobs:
       - name: Checkout dot-github
         uses: actions/checkout@v4
         with:
-          # Match the reusable-workflow ref (e.g. task/FOUR-33523-B), not main.
+          # Match the reusable-workflow ref (e.g. the calling feature branch), not main.
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: dot-github
