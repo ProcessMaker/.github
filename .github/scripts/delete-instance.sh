@@ -7,6 +7,8 @@
 #   DELETE_HARBOR     true to delete the Harbor artifact (default false)
 #   IMAGE_TAG         Harbor tag to delete when DELETE_HARBOR=true
 #   REGISTRY_USERNAME, REGISTRY_PASSWORD, REGISTRY_HOST
+#   PRESERVE_TLS_DIR  if set, export TLS secret here before wiping the namespace
+#                     (for GHA artifact restore on redeploy)
 set -u
 
 FAILED=0
@@ -21,6 +23,7 @@ NAMESPACE="ci-${INSTANCE}-ns-pm4"
 RELEASE="ci-${INSTANCE}"
 deploy_db="pm4_ci-${INSTANCE}%"
 deploy_ai="pm4_ci-${INSTANCE}_ai"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ ${#deploy_db} -lt 12 ]; then
   echo "ERROR: deploy_db safety check failed (length ${#deploy_db})"
@@ -29,19 +32,57 @@ fi
 
 set +e
 
-if kubectl get "namespace/${NAMESPACE}" >/dev/null 2>&1; then
-  echo "Deleting Instance :: ${RELEASE}"
-  helm delete "${RELEASE}" || true
-  kubectl delete namespace "${NAMESPACE}" || true
+preserve_tls() {
+  if [ -z "${PRESERVE_TLS_DIR:-}" ]; then
+    return 0
+  fi
+  echo "Preserving TLS secret before delete (PRESERVE_TLS_DIR=${PRESERVE_TLS_DIR})"
+  # shellcheck disable=SC1091
+  bash "${SCRIPT_DIR}/export-tls-secret.sh"
+}
+
+delete_k8s() {
+  if kubectl get "namespace/${NAMESPACE}" >/dev/null 2>&1; then
+    echo "Deleting Instance :: ${RELEASE}"
+    helm delete "${RELEASE}" || true
+    kubectl delete namespace "${NAMESPACE}" || true
+    echo "The instance [https://ci-${INSTANCE}.engk8s.processmaker.net] was removed from the cluster."
+    return 0
+  fi
+
+  echo "Namespace ${NAMESPACE} not found; skipping cluster delete."
+  return 0
+}
+
+delete_rds() {
+  echo "Cleaning RDS for instance ${INSTANCE} (always runs, even when the namespace is already gone)."
 
   set -o pipefail
-  mysql -u"${USER_MYSQL_ENG}" -p"${PASS_MYSQL_ENG}" -h "${RDS_ENG}" -N -e "SHOW DATABASES LIKE '${deploy_db}'" \
-    | xargs -r -I{} mysql -u"${USER_MYSQL_ENG}" -p"${PASS_MYSQL_ENG}" -h "${RDS_ENG}" -e "DROP DATABASE IF EXISTS \`{}\`;"
-  if [ $? -ne 0 ]; then
-    echo "WARN: Failed dropping databases matching ${deploy_db}"
-    FAILED=1
-  fi
+  matching_dbs=$(
+    mysql -u"${USER_MYSQL_ENG}" -p"${PASS_MYSQL_ENG}" -h "${RDS_ENG}" -N -e "SHOW DATABASES LIKE '${deploy_db}'"
+  )
+  list_status=$?
   set +o pipefail
+
+  if [ "${list_status}" -ne 0 ]; then
+    echo "WARN: Failed listing databases matching ${deploy_db}"
+    FAILED=1
+    return 1
+  fi
+
+  if [ -z "${matching_dbs}" ]; then
+    echo "No databases matching ${deploy_db} on RDS (already clean)."
+  else
+    echo "Dropping databases matching ${deploy_db}:"
+    echo "${matching_dbs}"
+    set -o pipefail
+    echo "${matching_dbs}" | xargs -r -I{} mysql -u"${USER_MYSQL_ENG}" -p"${PASS_MYSQL_ENG}" -h "${RDS_ENG}" -e "DROP DATABASE IF EXISTS \`{}\`;"
+    if [ $? -ne 0 ]; then
+      echo "WARN: Failed dropping databases matching ${deploy_db}"
+      FAILED=1
+    fi
+    set +o pipefail
+  fi
 
   mysql -u"${USER_MYSQL_ENG}" -p"${PASS_MYSQL_ENG}" -h "${RDS_ENG}" -e "DROP DATABASE IF EXISTS \`${deploy_ai}\`;"
   if [ $? -ne 0 ]; then
@@ -61,10 +102,12 @@ if kubectl get "namespace/${NAMESPACE}" >/dev/null 2>&1; then
     FAILED=1
   fi
 
-  echo "The instance [https://ci-${INSTANCE}.engk8s.processmaker.net] was deleted."
-else
-  echo "Namespace ${NAMESPACE} not found; nothing to delete on the cluster."
-fi
+  return 0
+}
+
+preserve_tls
+delete_k8s
+delete_rds
 
 if [ "${DELETE_HARBOR}" = "true" ]; then
   if [ -z "${IMAGE_TAG:-}" ]; then

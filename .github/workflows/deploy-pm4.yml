@@ -78,7 +78,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          repository: processmaker/.github
+          # Match the reusable-workflow ref (e.g. the calling feature branch), not main.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
 
       - name: Common 
         uses: ./.github/actions/common
@@ -177,8 +179,9 @@ jobs:
       - name: Checkout .github repo
         uses: actions/checkout@v4
         with:
-          repository: processmaker/.github
-          ref: main
+          # Match the reusable-workflow ref (e.g. the calling feature branch), not main.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
 
       - name: Common 
         uses: ./.github/actions/common
@@ -207,7 +210,22 @@ jobs:
 
       - name: Authenticate with Amazon EKS
         run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
-      
+
+      - name: Resolve instance id
+        id: instance
+        run: |
+          instance=$(echo -n "${{ env.IMAGE_TAG }}" | md5sum | head -c 10)
+          echo "instance=${instance}" >> "$GITHUB_OUTPUT"
+          echo "INSTANCE: ${instance}"
+
+      # Restored before helm install so cert-manager does not re-hit Let's Encrypt.
+      # Missing artifact is normal when deleteEKS was skipped or had no usable cert.
+      - name: Download stashed TLS secret
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-tls-${{ steps.instance.outputs.instance }}
+          path: ${{ runner.temp }}/ci-tls
       
       - name: Deploy instance EKS
         env:
@@ -235,8 +253,9 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           OCTANE: ${{ env.OCTANE }}
+          TLS_SECRET_DIR: ${{ runner.temp }}/ci-tls
         run: |
-          instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
+          instance="${{ steps.instance.outputs.instance }}"
           echo "INSTANCE: $instance"
           echo "IMAGE_TAG: $IMAGE_TAG"
           
@@ -260,7 +279,7 @@ jobs:
           cat .github/templates/instance.yaml
           echo "=== Checking db.yaml after replacements ==="
           cat .github/templates/db.yaml
-          chmod +x .github/scripts/deploy-instance.sh
+          chmod +x .github/scripts/deploy-instance.sh .github/scripts/restore-tls-secret.sh
           bash .github/scripts/deploy-instance.sh
           fi
           if [ "$MULTITENANCY" = "true" ]; then
@@ -283,7 +302,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          repository: processmaker/.github
+          # Match the reusable-workflow ref (e.g. the calling feature branch), not main.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
 
       - name: Common 
         uses: ./.github/actions/common
@@ -364,12 +385,86 @@ jobs:
       contains(github.event.pull_request.body, 'ci:run-testbench')
     runs-on: ${{ vars.RUNNER }}
     steps:
+      - name: Resolve companion branch
+        id: companion
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GIT_TOKEN }}
+        run: |
+          # Nested reusable workflows leave github.job_workflow_ref empty; job.workflow_sha
+          # is reliable. Map that SHA to a branch tip so testbench tracks the same series
+          # (e.g. the calling feature branch). Fall back to ci:k8s-branch, then main.
+          sha='${{ job.workflow_sha }}'
+          repo='${{ job.workflow_repository }}'
+          echo "workflow_sha=$sha repo=$repo"
+          ref="$(gh api "repos/${repo}/commits/${sha}/branches-where-head" --jq '.[0].name // empty' || true)"
+          if [ -z "$ref" ] && [[ "${CI_PR_BODY:-}" =~ ci:k8s-branch:([^[:space:]]+) ]]; then
+            ref="${BASH_REMATCH[1]}"
+            echo "branches-where-head empty; using ci:k8s-branch=$ref"
+          fi
+          if [ -z "$ref" ]; then
+            ref=main
+          fi
+          echo "companion_ref=$ref"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout dot-github
+        uses: actions/checkout@v4
+        with:
+          # Match the reusable-workflow ref (e.g. the calling feature branch), not main.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: dot-github
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Common
+        uses: ./dot-github/.github/actions/common
+        with:
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Authenticate with Amazon EKS
+        run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
+
       - name: Checkout testbench
         uses: actions/checkout@v4
         with:
           repository: ProcessMaker/testbench
+          ref: ${{ steps.companion.outputs.ref }}
           path: testbench
           token: ${{ secrets.GIT_TOKEN }}
+
+      # Must run before enable-testbench-relay so new relay/runner reclaim stable hostnames.
+      - name: Cleanup stale Tailscale CI nodes
+        working-directory: testbench
+        env:
+          TAILSCALE_API_KEY_CI: ${{ secrets.TAILSCALE_API_KEY_CI }}
+        run: |
+          instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
+          if [ -z "${TAILSCALE_API_KEY_CI}" ]; then
+            echo "ERROR: org secret TAILSCALE_API_KEY_CI is required (Tailscale API access token tskey-api-…)"
+            exit 1
+          fi
+          npm ci
+          npx tsx src/index.ts cleanup-tailscale --instance "$instance" --targets all
+
+      - name: Enable testbench runner relay
+        working-directory: dot-github
+        env:
+          HELM_REPO: ${{ secrets.HELM_REPO }}
+          HELM_USERNAME: ${{ secrets.HELM_USERNAME }}
+          HELM_PASSWORD: ${{ secrets.HELM_PASSWORD }}
+          TAILSCALE_AUTH_KEY_CI_RELAY: ${{ secrets.TAILSCALE_AUTH_KEY_CI_RELAY }}
+        run: |
+          instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
+          chmod +x .github/scripts/enable-testbench-relay.sh
+          .github/scripts/enable-testbench-relay.sh "$instance"
 
       - name: Run testbench
         working-directory: testbench
@@ -377,9 +472,14 @@ jobs:
           SITE_NAME: CI
           INSTANCE_PASSWORD: ${{ secrets.CI_INSTANCE_PASSWORD }}
           CONTEXT_PATH: ./context
-          TCP_TUNNELS: "mailserver:587 mailserver:993"
+          USE_RUNNER_RELAY: "true"
+          TAILSCALE_AUTH_KEY_CI_RUNNER: ${{ secrets.TAILSCALE_AUTH_KEY_CI_RUNNER }}
+          TAILSCALE_API_KEY_CI: ${{ secrets.TAILSCALE_API_KEY_CI }}
+          ENSURE_TESTBENCH_RELAY_SCRIPT: ${{ github.workspace }}/dot-github/.github/scripts/ensure-testbench-relay.sh
+          VERIFY_TESTBENCH_RELAY_SCRIPT: ${{ github.workspace }}/dot-github/.github/scripts/verify-testbench-relay.sh
         run: |
           instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
+          export INSTANCE="$instance"
           echo "INSTANCE: $instance"
           if [ "${{ env.MULTITENANCY }}" = "true" ]; then
             export URL="https://tenant-1.ci-$instance.engk8s.processmaker.net"
@@ -394,7 +494,7 @@ jobs:
   deleteEKS:
     name: Delete Instance
     if: github.event.action == 'closed' || inputs.delete != '' || contains(github.event.pull_request.body, 'ci:redeploy')
-    runs-on: self-hosted
+    runs-on: [self-hosted, pm-delete-runner]
     # GITHUB_TOKEN needs write to strip ci:redeploy from the PR body.
     # Using github.token (not GIT_TOKEN) so the edit does not trigger a new workflow run.
     permissions:
@@ -430,96 +530,63 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
-      - name: Delete instance EKS
-        run: |           
-          set +e
-          FAILED=0
+      - name: Checkout .github repo
+        uses: actions/checkout@v4
+        with:
+          # Match the reusable-workflow ref (e.g. the calling feature branch), not main.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
 
-          # If inputs.delete does not equal '', set the IMAGE_TAG to the value of inputs.delete
+      - name: Delete instance EKS
+        id: delete_instance
+        env:
+          USER_MYSQL_ENG: ${{ secrets.USER_MYSQL_ENG }}
+          PASS_MYSQL_ENG: ${{ secrets.PASS_MYSQL_ENG }}
+          RDS_ENG: ${{ secrets.RDS_ENG }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+          REGISTRY_HOST: ${{ secrets.REGISTRY_HOST }}
+        run: |
+          set +e
           if [ "${{ inputs.delete }}" != "" ]; then
             IMAGE_TAG=${{ inputs.delete }}
           else
             IMAGE_TAG=${{ env.IMAGE_TAG }}
           fi
-          INSTANCE=$(echo -n $IMAGE_TAG | md5sum | head -c 10)
+          export INSTANCE=$(echo -n "$IMAGE_TAG" | md5sum | head -c 10)
+          export IMAGE_TAG
+          echo "instance=${INSTANCE}" >> "$GITHUB_OUTPUT"
 
-          # Delete Harbor image only on PR close / manual delete — not on ci:redeploy
-          DELETE_HARBOR=false
           if [ "${{ github.event.action }}" = "closed" ] || [ "${{ inputs.delete }}" != "" ]; then
-            DELETE_HARBOR=true
-          fi
-
-          if kubectl get namespace/ci-$INSTANCE-ns-pm4 ; then
-            echo "Deleting Instance :: ci-$INSTANCE"
-            helm delete ci-$INSTANCE || true
-            kubectl delete namespace ci-$INSTANCE-ns-pm4 || true
-       
-            #Drop database
-            deploy_db="pm4_ci-${INSTANCE}%"
-            deploy_ai="\`pm4_ci-$INSTANCE_ai\`"
-
-            # check that that string length of $deploy_db is 12 or more as a safety check. If its less than 12, exit now
-            if [ ${#deploy_db} -lt 12 ]; then
-              echo "ERROR: deploy_db safety check failed (length ${#deploy_db})"
-              exit 1
-            fi
-
-            # Drop the main database including any tenant databases.
-            # Continue on failure so a half-built instance still gets cleaned up.
-            set -o pipefail
-            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -h ${{ secrets.RDS_ENG }} -N -e "SHOW DATABASES LIKE '${deploy_db}'" | xargs -r -I{} mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -h ${{ secrets.RDS_ENG }} -e "DROP DATABASE IF EXISTS \`{}\`;"
-            if [ $? -ne 0 ]; then
-              echo "WARN: Failed dropping databases matching ${deploy_db}"
-              FAILED=1
-            fi
-            set +o pipefail
-
-            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP DATABASE IF EXISTS $deploy_ai" -h ${{ secrets.RDS_ENG }}
-            if [ $? -ne 0 ]; then
-              echo "WARN: Failed dropping AI database $deploy_ai"
-              FAILED=1
-            fi
-
-            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP USER IF EXISTS 'user_ci-$INSTANCE'@'%'" -h ${{ secrets.RDS_ENG }}
-            if [ $? -ne 0 ]; then
-              echo "WARN: Failed dropping user user_ci-$INSTANCE"
-              FAILED=1
-            fi
-
-            mysql -u${{ secrets.USER_MYSQL_ENG }} -p${{ secrets.PASS_MYSQL_ENG }} -e "DROP USER IF EXISTS 'user_ci-$INSTANCE_ai'@'%'" -h ${{ secrets.RDS_ENG }}
-            if [ $? -ne 0 ]; then
-              echo "WARN: Failed dropping user user_ci-$INSTANCE_ai"
-              FAILED=1
-            fi
-
-            echo "The instance [https://ci-$INSTANCE.engk8s.processmaker.net] was deleted!!"
+            export DELETE_HARBOR=true
           else
-            echo "The pull request does not have an instance on K8s [https://ci-$INSTANCE.engk8s.processmaker.net] not found!!"
+            export DELETE_HARBOR=false
           fi
 
-          if [ "$DELETE_HARBOR" = "true" ]; then
-            echo "Deleting image from Harbor: ${IMAGE_TAG}"
-            HTTP_CODE=$(curl -s -o /tmp/harbor_delete_out -w "%{http_code}" -X DELETE \
-              -u ${{ secrets.REGISTRY_USERNAME }}:${{ secrets.REGISTRY_PASSWORD }} \
-              "https://${{ secrets.REGISTRY_HOST }}/api/v2.0/projects/processmaker/repositories/enterprise/artifacts/${IMAGE_TAG}")
-            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-              echo "Harbor image deleted (HTTP $HTTP_CODE)"
-            elif [ "$HTTP_CODE" = "404" ]; then
-              echo "Harbor image not found (already deleted)"
-            else
-              echo "WARN: Failed deleting Harbor image ${IMAGE_TAG} (HTTP $HTTP_CODE)"
-              cat /tmp/harbor_delete_out || true
-              FAILED=1
-            fi
+          # On ci:redeploy, stash the LE TLS secret as a GHA artifact so deploy can
+          # restore it and avoid burning another Let's Encrypt issuance.
+          if [ "${{ github.event.action }}" != "closed" ] && [ "${{ inputs.delete }}" = "" ] && [[ "${{ github.event.pull_request.body }}" == *"ci:redeploy"* ]]; then
+            export PRESERVE_TLS_DIR="${RUNNER_TEMP}/ci-tls"
+          fi
+
+          echo "INSTANCE=${INSTANCE}"
+          chmod +x .github/scripts/delete-instance.sh .github/scripts/export-tls-secret.sh
+          bash .github/scripts/delete-instance.sh
+
+          if [ -n "${PRESERVE_TLS_DIR:-}" ] && [ -f "${PRESERVE_TLS_DIR}/stashed" ]; then
+            echo "tls_stashed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Skipping Harbor image delete (ci:redeploy)"
+            echo "tls_stashed=false" >> "$GITHUB_OUTPUT"
           fi
 
-          if [ "$FAILED" -ne 0 ]; then
-            echo "One or more delete operations failed"
-            exit 1
-          fi
-          echo "Delete completed successfully"
+      - name: Upload stashed TLS secret
+        if: steps.delete_instance.outputs.tls_stashed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-tls-${{ steps.delete_instance.outputs.instance }}
+          path: ${{ runner.temp }}/ci-tls/
+          retention-days: 1
+          if-no-files-found: warn
 
       # Strip ci:redeploy from the PR body so it does not re-trigger on later edits.
       # Uses github.token (default) so this edit does not start a new workflow run.
@@ -553,7 +620,8 @@ jobs:
       !cancelled() &&
       needs.imageEKS.result == 'success' &&
       github.event.action != 'closed' &&
-      inputs.delete == ''
+      inputs.delete == '' &&
+      !contains(github.event.pull_request.body, 'ci:skip-phpunit')
     needs: imageEKS
     runs-on: ${{ vars.RUNNER }}
     timeout-minutes: 150
@@ -564,7 +632,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          repository: processmaker/.github
+          # Match the reusable-workflow ref (e.g. the calling feature branch), not main.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
 
       - name: Common 
         uses: ./.github/actions/common

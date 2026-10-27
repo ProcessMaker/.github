@@ -71,16 +71,32 @@ jobs:
           kubectl cluster-info --request-timeout=15s
 
       - name: Delete instance EKS
+        id: delete_instance
         env:
           INSTANCE: ${{ env.INSTANCE }}
           USER_MYSQL_ENG: ${{ secrets.USER_MYSQL_ENG }}
           PASS_MYSQL_ENG: ${{ secrets.PASS_MYSQL_ENG }}
           RDS_ENG: ${{ secrets.RDS_ENG }}
           DELETE_HARBOR: "false"
+          PRESERVE_TLS_DIR: ${{ runner.temp }}/ci-tls
         run: |
           echo "INSTANCE: $INSTANCE"
-          chmod +x .github/scripts/delete-instance.sh
+          chmod +x .github/scripts/delete-instance.sh .github/scripts/export-tls-secret.sh
           bash .github/scripts/delete-instance.sh
+          if [ -f "${PRESERVE_TLS_DIR}/stashed" ]; then
+            echo "tls_stashed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tls_stashed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload stashed TLS secret
+        if: steps.delete_instance.outputs.tls_stashed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-tls-${{ env.INSTANCE }}
+          path: ${{ runner.temp }}/ci-tls/
+          retention-days: 1
+          if-no-files-found: warn
 
   deploy:
     name: deploy-${{ inputs.arch_id }}
@@ -132,6 +148,13 @@ jobs:
       - name: Authenticate with Amazon EKS
         run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
 
+      - name: Download stashed TLS secret
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-tls-${{ env.INSTANCE }}
+          path: ${{ runner.temp }}/ci-tls
+
       - name: Deploy instance EKS
         env:
           IMAGE_TAG: ${{ inputs.image_tag }}
@@ -160,6 +183,7 @@ jobs:
           MULTITENANCY: ${{ env.MULTITENANCY }}
           CI_PROJECT: processmaker
           CI_PACKAGE_BRANCH: develop
+          TLS_SECRET_DIR: ${{ runner.temp }}/ci-tls
         run: |
           instance="${{ steps.instance.outputs.instance }}"
           echo "INSTANCE: $instance"
@@ -181,7 +205,7 @@ jobs:
           sed -i "s#{{PMAI_HOST_WS}}#$PMAI_HOST_WS#g" .github/templates/instance.yaml
           sed -i "s#{{MYSQL_USERNAME}}#$RDS_ADMIN_USERNAME#g" .github/templates/db.yaml
           sed -i "s#{{MYSQL_PASSWORD}}#$RDS_ADMIN_PASSWORD#g" .github/templates/db.yaml
-          chmod +x .github/scripts/deploy-instance.sh
+          chmod +x .github/scripts/deploy-instance.sh .github/scripts/restore-tls-secret.sh
           bash .github/scripts/deploy-instance.sh
 
   testbench:
@@ -195,12 +219,82 @@ jobs:
       matrix:
         tenant: ${{ fromJSON(inputs.tenants_json) }}
     steps:
+      - name: Resolve companion branch
+        id: companion
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GIT_TOKEN }}
+        run: |
+          # Nested reusable workflows leave github.job_workflow_ref empty; job.workflow_sha
+          # is reliable. Map that SHA to a branch tip so testbench tracks the same series
+          # (e.g. the calling feature branch). Fall back to main.
+          sha='${{ job.workflow_sha }}'
+          repo='${{ job.workflow_repository }}'
+          echo "workflow_sha=$sha repo=$repo"
+          ref="$(gh api "repos/${repo}/commits/${sha}/branches-where-head" --jq '.[0].name // empty' || true)"
+          if [ -z "$ref" ]; then
+            ref=main
+          fi
+          echo "companion_ref=$ref"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout dot-github
+        uses: actions/checkout@v4
+        with:
+          # Match the reusable-workflow ref (e.g. the calling feature branch), not main.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: dot-github
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Common
+        uses: ./dot-github/.github/actions/common
+        with:
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Authenticate with Amazon EKS
+        run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
+
       - name: Checkout testbench
         uses: actions/checkout@v4
         with:
           repository: ProcessMaker/testbench
+          ref: ${{ steps.companion.outputs.ref }}
           path: testbench
           token: ${{ secrets.GIT_TOKEN }}
+
+      # Must run before enable-testbench-relay so new relay/runner reclaim stable hostnames.
+      - name: Cleanup stale Tailscale CI nodes
+        working-directory: testbench
+        env:
+          TAILSCALE_API_KEY_CI: ${{ secrets.TAILSCALE_API_KEY_CI }}
+        run: |
+          instance="${{ needs.deploy.outputs.instance }}"
+          if [ -z "${TAILSCALE_API_KEY_CI}" ]; then
+            echo "ERROR: org secret TAILSCALE_API_KEY_CI is required (Tailscale API access token tskey-api-…)"
+            exit 1
+          fi
+          npm ci
+          npx tsx src/index.ts cleanup-tailscale --instance "$instance" --targets all
+
+      - name: Enable testbench runner relay
+        working-directory: dot-github
+        env:
+          HELM_REPO: ${{ secrets.HELM_REPO }}
+          HELM_USERNAME: ${{ secrets.HELM_USERNAME }}
+          HELM_PASSWORD: ${{ secrets.HELM_PASSWORD }}
+          TAILSCALE_AUTH_KEY_CI_RELAY: ${{ secrets.TAILSCALE_AUTH_KEY_CI_RELAY }}
+        run: |
+          instance="${{ needs.deploy.outputs.instance }}"
+          chmod +x .github/scripts/enable-testbench-relay.sh
+          .github/scripts/enable-testbench-relay.sh "$instance"
 
       - name: Run testbench
         working-directory: testbench
@@ -208,9 +302,14 @@ jobs:
           SITE_NAME: CI
           INSTANCE_PASSWORD: ${{ secrets.CI_INSTANCE_PASSWORD }}
           CONTEXT_PATH: ./context
-          TCP_TUNNELS: "mailserver:587 mailserver:993"
+          USE_RUNNER_RELAY: "true"
+          TAILSCALE_AUTH_KEY_CI_RUNNER: ${{ secrets.TAILSCALE_AUTH_KEY_CI_RUNNER }}
+          TAILSCALE_API_KEY_CI: ${{ secrets.TAILSCALE_API_KEY_CI }}
+          ENSURE_TESTBENCH_RELAY_SCRIPT: ${{ github.workspace }}/dot-github/.github/scripts/ensure-testbench-relay.sh
+          VERIFY_TESTBENCH_RELAY_SCRIPT: ${{ github.workspace }}/dot-github/.github/scripts/verify-testbench-relay.sh
         run: |
           instance="${{ needs.deploy.outputs.instance }}"
+          export INSTANCE="$instance"
           tenant="${{ matrix.tenant }}"
           echo "INSTANCE: $instance"
           echo "TENANT: $tenant"

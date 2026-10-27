@@ -54,8 +54,9 @@ jobs:
       - name: Checkout .github
         uses: actions/checkout@v4
         with:
-          repository: ProcessMaker/.github
-          ref: main
+          # Match the reusable-workflow ref (e.g. the calling feature branch), not main.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
 
       - uses: actions/setup-node@v4
         with:
