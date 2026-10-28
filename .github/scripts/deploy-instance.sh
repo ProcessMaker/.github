@@ -67,12 +67,15 @@ restore_stashed_tls() {
   bash "${SCRIPT_DIR}/restore-tls-secret.sh"
 }
 
-# Keep helm from deleting a pre-created namespace when the chart's Namespace
-# pre-install hook is reconciled (hook lifecycle / SSA).
-protect_namespace_from_helm() {
+# Annotate a pre-created namespace and tell the chart not to render its
+# Namespace pre-install hook (that hook's before-hook-creation delete would
+# terminate this namespace mid-install; resource-policy keep does not apply
+# on Helm's hook Delete path).
+protect_precreated_namespace() {
   kubectl annotate "namespace/${NAMESPACE}" \
     "helm.sh/resource-policy=keep" \
     --overwrite >/dev/null
+  HELM_CHART_ARGS+=(--set "namespace.create=false")
 }
 
 wait_for_namespace_active() {
@@ -89,7 +92,7 @@ APP_VERSION=$(echo "$CI_PROJECT-$CI_PACKAGE_BRANCH" | sed "s;/;-;g" | sed "s/ref
 if ! kubectl get "namespace/${NAMESPACE}" >/dev/null 2>&1; then
   echo "New instance. Creating Namespace"
   kubectl create namespace "${NAMESPACE}"
-  protect_namespace_from_helm
+  protect_precreated_namespace
   restore_stashed_tls
   wait_for_namespace_active
 
