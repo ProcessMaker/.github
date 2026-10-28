@@ -208,16 +208,14 @@ jobs:
           chmod +x .github/scripts/deploy-instance.sh .github/scripts/restore-tls-secret.sh
           bash .github/scripts/deploy-instance.sh
 
-  testbench:
-    name: testbench-${{ inputs.arch_id }}-${{ matrix.tenant }}
+  # Instance-scoped Tailscale cleanup + Helm relay enable. Must run once before the
+  # tenant matrix so parallel tenants do not race on the same Helm release.
+  enable-relay:
+    name: enable-relay-${{ inputs.arch_id }}
     needs: [deploy]
     if: ${{ !cancelled() && needs.deploy.result == 'success' && !inputs.redeploy_only }}
     runs-on: ${{ vars.RUNNER }}
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        tenant: ${{ fromJSON(inputs.tenants_json) }}
+    timeout-minutes: 30
     steps:
       - name: Resolve companion branch
         id: companion
@@ -295,6 +293,63 @@ jobs:
           instance="${{ needs.deploy.outputs.instance }}"
           chmod +x .github/scripts/enable-testbench-relay.sh
           .github/scripts/enable-testbench-relay.sh "$instance"
+
+  testbench:
+    name: testbench-${{ inputs.arch_id }}-${{ matrix.tenant }}
+    needs: [deploy, enable-relay]
+    if: ${{ !cancelled() && needs.deploy.result == 'success' && needs.enable-relay.result == 'success' && !inputs.redeploy_only }}
+    runs-on: ${{ vars.RUNNER }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        tenant: ${{ fromJSON(inputs.tenants_json) }}
+    steps:
+      - name: Resolve companion branch
+        id: companion
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GIT_TOKEN }}
+        run: |
+          # Nested reusable workflows leave github.job_workflow_ref empty; job.workflow_sha
+          # is reliable. Map that SHA to a branch tip so testbench tracks the same series
+          # (e.g. the calling feature branch). Fall back to main.
+          sha='${{ job.workflow_sha }}'
+          repo='${{ job.workflow_repository }}'
+          echo "workflow_sha=$sha repo=$repo"
+          ref="$(gh api "repos/${repo}/commits/${sha}/branches-where-head" --jq '.[0].name // empty' || true)"
+          if [ -z "$ref" ]; then
+            ref=main
+          fi
+          echo "companion_ref=$ref"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout dot-github
+        uses: actions/checkout@v4
+        with:
+          # Match the reusable-workflow ref (e.g. the calling feature branch), not main.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: dot-github
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Authenticate with Amazon EKS
+        run: aws eks update-kubeconfig --region us-east-1 --name pm4-eng
+
+      - name: Checkout testbench
+        uses: actions/checkout@v4
+        with:
+          repository: ProcessMaker/testbench
+          ref: ${{ steps.companion.outputs.ref }}
+          path: testbench
+          token: ${{ secrets.GIT_TOKEN }}
 
       - name: Run testbench
         working-directory: testbench
