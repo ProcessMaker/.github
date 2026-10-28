@@ -42,15 +42,26 @@ preserve_tls() {
 }
 
 delete_k8s() {
-  if kubectl get "namespace/${NAMESPACE}" >/dev/null 2>&1; then
-    echo "Deleting Instance :: ${RELEASE}"
+  echo "Deleting Instance :: ${RELEASE}"
+
+  # Release metadata is stored in the kube-context namespace (default for CI
+  # runners). Always uninstall — even when the instance namespace is already gone —
+  # so orphaned releases from partial/failed deletes cannot block the next
+  # helm install with "cannot reuse a name that is still in use".
+  if helm status "${RELEASE}" >/dev/null 2>&1; then
+    echo "Uninstalling Helm release ${RELEASE}"
     helm delete "${RELEASE}" || true
-    kubectl delete namespace "${NAMESPACE}" || true
-    echo "The instance [https://ci-${INSTANCE}.engk8s.processmaker.net] was removed from the cluster."
-    return 0
+  else
+    echo "Helm release ${RELEASE} not found; skipping uninstall"
   fi
 
-  echo "Namespace ${NAMESPACE} not found; skipping cluster delete."
+  if kubectl get "namespace/${NAMESPACE}" >/dev/null 2>&1; then
+    kubectl delete namespace "${NAMESPACE}" || true
+    echo "The instance [https://ci-${INSTANCE}.engk8s.processmaker.net] was removed from the cluster."
+  else
+    echo "Namespace ${NAMESPACE} not found; skipping namespace delete."
+  fi
+
   return 0
 }
 
