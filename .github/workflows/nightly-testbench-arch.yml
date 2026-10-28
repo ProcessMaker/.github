@@ -351,6 +351,11 @@ jobs:
           path: testbench
           token: ${{ secrets.GIT_TOKEN }}
 
+      # start.sh runs cleanup-tailscale via npx/tsx; deps must be installed here.
+      - name: Install testbench dependencies
+        working-directory: testbench
+        run: npm ci
+
       - name: Run testbench
         working-directory: testbench
         env:
