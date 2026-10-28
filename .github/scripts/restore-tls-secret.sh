@@ -47,10 +47,9 @@ if [ -s "${TLS_SECRET_DIR}/ca.crt" ]; then
   kubectl patch secret "${SECRET}" -n "${NAMESPACE}" --type merge -p "{\"data\":{\"ca.crt\":\"${CA_B64}\"}}"
 fi
 
-# Help cert-manager adopt the existing secret for the ingress-managed Certificate.
-kubectl annotate secret "${SECRET}" -n "${NAMESPACE}" \
-  "cert-manager.io/certificate-name=${SECRET}" \
-  --overwrite >/dev/null
-
-echo "TLS secret restored; cert-manager should adopt instead of re-issuing"
+# Do not pre-annotate cert-manager.io/certificate-name. That annotation marks the
+# secret as owned by a Certificate; applying it before the Certificate exists can
+# confuse cert-manager orphan cleanup while helm is still installing. Ingress
+# secretName matching is enough for cert-manager to adopt this secret.
+echo "TLS secret restored; cert-manager should adopt via ingress secretName"
 exit 0
