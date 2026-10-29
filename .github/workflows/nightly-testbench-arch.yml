@@ -294,16 +294,14 @@ jobs:
           chmod +x .github/scripts/enable-testbench-relay.sh
           .github/scripts/enable-testbench-relay.sh "$instance"
 
+  # One job owns mailserver + Tailscale (tb-ci-<instance>). start.sh runs tenant
+  # testbench containers in parallel against that shared stack with per-tenant mailboxes.
   testbench:
-    name: testbench-${{ inputs.arch_id }}-${{ matrix.tenant }}
+    name: testbench-${{ inputs.arch_id }}
     needs: [deploy, enable-relay]
     if: ${{ !cancelled() && needs.deploy.result == 'success' && needs.enable-relay.result == 'success' && !inputs.redeploy_only }}
     runs-on: ${{ vars.RUNNER }}
     timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        tenant: ${{ fromJSON(inputs.tenants_json) }}
     steps:
       - name: Resolve companion branch
         id: companion
@@ -367,28 +365,25 @@ jobs:
           TAILSCALE_API_KEY_CI: ${{ secrets.TAILSCALE_API_KEY_CI }}
           ENSURE_TESTBENCH_RELAY_SCRIPT: ${{ github.workspace }}/dot-github/.github/scripts/ensure-testbench-relay.sh
           VERIFY_TESTBENCH_RELAY_SCRIPT: ${{ github.workspace }}/dot-github/.github/scripts/verify-testbench-relay.sh
+          TENANTS_JSON: ${{ inputs.tenants_json }}
         run: |
           instance="${{ needs.deploy.outputs.instance }}"
           export INSTANCE="$instance"
-          tenant="${{ matrix.tenant }}"
           echo "INSTANCE: $instance"
-          echo "TENANT: $tenant"
-          if [ "$tenant" = "single" ]; then
-            export URL="https://ci-$instance.engk8s.processmaker.net"
-          else
-            export URL="https://$tenant.ci-$instance.engk8s.processmaker.net"
-          fi
-          echo "URL: $URL"
+          echo "TENANTS_JSON: $TENANTS_JSON"
+          tenants="$(python3 -c 'import json,os; print(",".join(json.loads(os.environ["TENANTS_JSON"])))')"
+          echo "TENANTS: $tenants"
           export USER_GROUP="$(id -u):$(id -g)"
           chmod +x ./start.sh
-          ./start.sh
+          ./start.sh --tenants "$tenants"
 
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-${{ inputs.arch_id }}-${{ matrix.tenant }}
+          name: playwright-${{ inputs.arch_id }}
           path: |
-            testbench/playwright-report
-            testbench/test-results
+            testbench/playwright-report-*
+            testbench/test-results-*
+            testbench/testbench-*.log
           if-no-files-found: ignore

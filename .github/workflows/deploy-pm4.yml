@@ -481,15 +481,14 @@ jobs:
           instance=$(echo -n ${{env.IMAGE_TAG}} | md5sum | head -c 10)
           export INSTANCE="$instance"
           echo "INSTANCE: $instance"
-          if [ "${{ env.MULTITENANCY }}" = "true" ]; then
-            export URL="https://tenant-1.ci-$instance.engk8s.processmaker.net"
-          else
-            export URL="https://ci-$instance.engk8s.processmaker.net"
-          fi
-          echo "URL: $URL"
           export USER_GROUP="$(id -u):$(id -g)"
           chmod +x ./start.sh
-          ./start.sh
+          # Shared mail/Tailscale path; MT uses tenant-1 mailbox set (abe-imap-1@…).
+          if [ "${{ env.MULTITENANCY }}" = "true" ]; then
+            ./start.sh --tenants tenant-1
+          else
+            ./start.sh --tenants single
+          fi
 
   deleteEKS:
     name: Delete Instance
