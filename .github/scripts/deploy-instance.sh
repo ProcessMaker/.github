@@ -1,13 +1,33 @@
 #!/usr/bin/env bash
 # Deploy (or upgrade) one CI instance. Placeholders {{INSTANCE}} are sed-substituted
 # by the workflow before this script runs.
+#
+# Fresh install (no helm upgrade) is required when:
+#   - REQUIRE_FRESH_INSTALL=true (e.g. PR ci:redeploy), or
+#   - instance id is nt-* (nightly testbench stable names)
+# PR CI builds may upgrade an existing namespace unless one of the above applies.
 set -euo pipefail
 
 NAMESPACE="ci-{{INSTANCE}}-ns-pm4"
 RELEASE="ci-{{INSTANCE}}"
+INSTANCE_ID="{{INSTANCE}}"
 HELM_CHART_ARGS=()
 
 echo "NAMESPACE : ${NAMESPACE}"
+
+requires_fresh_install() {
+  if [ "${REQUIRE_FRESH_INSTALL:-false}" = "true" ]; then
+    echo "Fresh install required (REQUIRE_FRESH_INSTALL=true)"
+    return 0
+  fi
+  case "${INSTANCE_ID}" in
+    nt-*)
+      echo "Fresh install required (nightly instance id ${INSTANCE_ID})"
+      return 0
+      ;;
+  esac
+  return 1
+}
 
 # Prefer the chart cloned by the Common action (ci:k8s-branch) so unpublished
 # template fixes are picked up without waiting on a Harbor chart publish.
@@ -89,6 +109,33 @@ wait_for_namespace_active() {
 
 APP_VERSION=$(echo "$CI_PROJECT-$CI_PACKAGE_BRANCH" | sed "s;/;-;g" | sed "s/refs-heads-//g")
 
+wait_for_mysql_setup_job() {
+  local job="mysql-setup-job-ci-{{INSTANCE}}"
+  local deadline=$((SECONDS + 600))
+  while true; do
+    local succeeded failed
+    succeeded="$(kubectl get job "${job}" -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"
+    failed="$(kubectl get job "${job}" -o jsonpath='{.status.failed}' 2>/dev/null || true)"
+    if [[ "${succeeded}" == "1" ]]; then
+      echo "MySQL Setup Job has completed."
+      return 0
+    fi
+    if [[ -n "${failed}" && "${failed}" != "0" ]]; then
+      echo "ERROR: MySQL Setup Job ${job} failed (failed=${failed})"
+      kubectl describe job "${job}" || true
+      kubectl logs "job/${job}" || true
+      exit 1
+    fi
+    if [ "${SECONDS}" -ge "${deadline}" ]; then
+      echo "ERROR: MySQL Setup Job ${job} timed out after 600s"
+      kubectl describe job "${job}" || true
+      exit 1
+    fi
+    echo "MySQL Setup Job is still running. Checking again in 10 seconds..."
+    sleep 10
+  done
+}
+
 if ! kubectl get "namespace/${NAMESPACE}" >/dev/null 2>&1; then
   echo "New instance. Creating Namespace"
   kubectl create namespace "${NAMESPACE}"
@@ -102,16 +149,7 @@ if ! kubectl get "namespace/${NAMESPACE}" >/dev/null 2>&1; then
   cat .github/templates/db.yaml
   kubectl apply -f .github/templates/db.yaml --v=4
 
-  while true; do
-    DBSTATUS=$(kubectl get job "mysql-setup-job-ci-{{INSTANCE}}" -o jsonpath='{.status.succeeded}')
-    if [[ "$DBSTATUS" == "1" ]]; then
-      echo "MySQL Setup Job has completed."
-      break
-    else
-      echo "MySQL Setup Job is still running. Checking again in 10 seconds..."
-      sleep 10
-    fi
-  done
+  wait_for_mysql_setup_job
 
   echo "Removing Job"
   kubectl delete job "mysql-setup-job-ci-{{INSTANCE}}"
@@ -125,6 +163,16 @@ if ! kubectl get "namespace/${NAMESPACE}" >/dev/null 2>&1; then
     "${HELM_CHART_ARGS[@]}" \
     $(helm_common_sets)
 else
+  if requires_fresh_install; then
+    echo "ERROR: namespace ${NAMESPACE} already exists but a fresh install is required."
+    echo "Nightly nt-* instances and ci:redeploy must not take the helm upgrade path"
+    echo "(stale PVC APP_KEY / tenant ciphertext drift). Re-run delete until the"
+    echo "namespace is gone, then deploy again."
+    kubectl get "namespace/${NAMESPACE}" -o wide || true
+    helm status "${RELEASE}" || true
+    exit 1
+  fi
+
   echo "Instance exists. Running upgrade and bouncing pods"
   # shellcheck disable=SC2046
   helm upgrade --timeout 60m -f .github/templates/instance.yaml "${RELEASE}" \

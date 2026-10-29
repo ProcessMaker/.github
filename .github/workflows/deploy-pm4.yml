@@ -254,10 +254,13 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           OCTANE: ${{ env.OCTANE }}
           TLS_SECRET_DIR: ${{ runner.temp }}/ci-tls
+          # ci:redeploy must install greenfield (same rule as nightly nt-*).
+          REQUIRE_FRESH_INSTALL: ${{ env.CI_REDEPLOY }}
         run: |
           instance="${{ steps.instance.outputs.instance }}"
           echo "INSTANCE: $instance"
           echo "IMAGE_TAG: $IMAGE_TAG"
+          echo "REQUIRE_FRESH_INSTALL: ${REQUIRE_FRESH_INSTALL:-false}"
           
           if [[ "${{ env.SKIP_REDEPLOY }}" != "true" ]]; then
 

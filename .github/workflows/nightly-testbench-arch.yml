@@ -184,12 +184,16 @@ jobs:
           CI_PROJECT: processmaker
           CI_PACKAGE_BRANCH: develop
           TLS_SECRET_DIR: ${{ runner.temp }}/ci-tls
+          # Nightly nt-* must never helm-upgrade leftover state (also enforced by
+          # instance id pattern in deploy-instance.sh).
+          REQUIRE_FRESH_INSTALL: "true"
         run: |
           instance="${{ steps.instance.outputs.instance }}"
           echo "INSTANCE: $instance"
           echo "IMAGE_TAG: $IMAGE_TAG"
           echo "OCTANE: $OCTANE"
           echo "MULTITENANCY: $MULTITENANCY"
+          echo "REQUIRE_FRESH_INSTALL: ${REQUIRE_FRESH_INSTALL:-false}"
 
           sed -i "s#{{INSTANCE}}#$instance#g" .github/scripts/deploy-instance.sh
           sed -i "s#{{INSTANCE}}#$instance#g" .github/templates/instance.yaml
