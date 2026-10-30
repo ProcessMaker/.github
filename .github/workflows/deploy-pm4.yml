@@ -30,6 +30,7 @@ env:
   DOM_EKS: ${{ secrets.DOM_EKS }}
   GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
   PACKAGIST_TOKEN: ${{ secrets.PACKAGIST_TOKEN }}
+  ELLUCIAN_PACKAGIST_TOKEN: ${{ secrets.ELLUCIAN_PACKAGIST_TOKEN }}
   BUILD_BASE: ${{ (contains(github.event.pull_request.body, 'ci:build-base') || github.event_name == 'schedule') && '1' || '0' }}
   MULTITENANCY: ${{ contains(github.event.pull_request.body, 'ci:single-tenant') && 'false' || 'true' }}
   OCTANE: ${{ contains(github.event.pull_request.body, 'ci:no-octane') && 'false' || 'true' }}

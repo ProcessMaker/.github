@@ -40,6 +40,7 @@ env:
   CI_PR_BODY: 'ci:release-branch:develop'
   GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
   PACKAGIST_TOKEN: ${{ secrets.PACKAGIST_TOKEN }}
+  ELLUCIAN_PACKAGIST_TOKEN: ${{ secrets.ELLUCIAN_PACKAGIST_TOKEN }}
   CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
   PMAI_HOST: pmai-svc.pmai-system.svc.cluster.local
   PMAI_HOST_WS: pmai-ws.engk8s.processmaker.net
