@@ -32,6 +32,7 @@ env:
   OCTANE: ${{ inputs.octane && 'true' || 'false' }}
   MULTITENANCY: ${{ inputs.multitenancy && 'true' || 'false' }}
   GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+  PACKAGIST_TOKEN: ${{ secrets.PACKAGIST_TOKEN }}
   DOM_EKS: ${{ secrets.DOM_EKS }}
   CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
   PMAI_HOST: pmai-svc.pmai-system.svc.cluster.local
