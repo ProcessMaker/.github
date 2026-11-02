@@ -38,6 +38,7 @@ env:
   CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
   SKIP_REDEPLOY: ${{ (contains(github.event.pull_request.body, 'ci:skip-redeploy')) && 'true' || 'false' }}
   CI_REDEPLOY: ${{ (contains(github.event.pull_request.body, 'ci:redeploy')) && 'true' || 'false' }}
+  PHPUNIT_LOG_EVENTS: ${{ contains(github.event.pull_request.body, 'ci:phpunit-log-events') && 'true' || '' }}
   # K8S_BRANCH: ${{ contains(github.event.pull_request.body, 'ci:next') && 'next' || 'release-2024-fall' }}
   PMAI_HOST: ${{ contains(github.event.pull_request.body, 'ci:pmai_dev') && 'pmai-svc.pmai-system-dev.svc.cluster.local' || 'pmai-svc.pmai-system.svc.cluster.local' }}
   PMAI_HOST_WS: ${{ contains(github.event.pull_request.body, 'ci:pmai_dev') && 'pmai-dev-ws.engk8s.processmaker.net' || 'pmai-ws.engk8s.processmaker.net' }}
@@ -707,7 +708,27 @@ jobs:
             echo "COVERAGE_EXISTS=false" >> $GITHUB_ENV
           fi
 
+          if [ "${PHPUNIT_LOG_EVENTS:-}" = "true" ]; then
+            if docker cp "$PHPUNIT_CONTAINER:/opt/processmaker/phpunit.log" phpunit.log; then
+              echo "Copied phpunit.log (ci:phpunit-log-events)"
+              echo "PHPUNIT_LOG_EXISTS=true" >> $GITHUB_ENV
+              echo "---- last 200 lines of phpunit.log ----"
+              tail -n 200 phpunit.log || true
+            else
+              echo "phpunit.log not found in container"
+              echo "PHPUNIT_LOG_EXISTS=false" >> $GITHUB_ENV
+            fi
+          fi
+
           exit "${PHPUNIT_EXIT:-1}"
+
+      - name: Upload phpunit event log
+        if: always() && env.PHPUNIT_LOG_EXISTS == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: phpunit-log-events-${{ github.run_id }}
+          path: ${{ env.PHPUNIT_COMPOSE_DIR }}/phpunit.log
+          retention-days: 14
 
       - name: Force cleanup phpunit containers
         if: always()
