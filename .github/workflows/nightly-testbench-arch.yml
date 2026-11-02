@@ -23,11 +23,17 @@ on:
         required: false
         type: boolean
         default: false
+      package_branch:
+        description: ProcessMaker branch used for this nightly run
+        required: false
+        type: string
+        default: develop
 
 env:
   CI_PROJECT: processmaker
-  CI_PACKAGE_BRANCH: develop
+  CI_PACKAGE_BRANCH: ${{ inputs.package_branch || 'develop' }}
   IMAGE_TAG: ${{ inputs.image_tag }}
+  # Release/k8s companion stays on develop; package_branch only selects core.
   CI_PR_BODY: 'ci:release-branch:develop'
   OCTANE: ${{ inputs.octane && 'true' || 'false' }}
   MULTITENANCY: ${{ inputs.multitenancy && 'true' || 'false' }}
@@ -184,7 +190,7 @@ jobs:
           OCTANE: ${{ env.OCTANE }}
           MULTITENANCY: ${{ env.MULTITENANCY }}
           CI_PROJECT: processmaker
-          CI_PACKAGE_BRANCH: develop
+          CI_PACKAGE_BRANCH: ${{ inputs.package_branch || 'develop' }}
           TLS_SECRET_DIR: ${{ runner.temp }}/ci-tls
           # Nightly nt-* must never helm-upgrade leftover state (also enforced by
           # instance id pattern in deploy-instance.sh).

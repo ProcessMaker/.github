@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       skip_build:
-        description: Skip Docker image build and reuse Harbor processmaker-develop
+        description: Skip Docker image build and reuse Harbor image for the resolved package branch
         required: false
         type: boolean
         default: false
@@ -13,10 +13,15 @@ on:
         required: false
         type: boolean
         default: false
+      package_branch:
+        description: ProcessMaker branch to build/deploy (defaults to caller Use workflow from / ref, else develop)
+        required: false
+        type: string
+        default: ''
   workflow_dispatch:
     inputs:
       skip_build:
-        description: Skip Docker image build and reuse Harbor processmaker-develop
+        description: Skip Docker image build and reuse Harbor image for the resolved package branch
         required: false
         type: boolean
         default: false
@@ -28,16 +33,19 @@ on:
         options:
           - Run Now
           - Redeploy Only
+      package_branch:
+        description: ProcessMaker branch to build/deploy (defaults to Use workflow from / ref, else develop)
+        required: false
+        type: string
+        default: ''
 
 concurrency:
-  group: nightly-testbench
+  # Allow a feature-branch run alongside develop without sharing one queue.
+  group: nightly-testbench-${{ inputs.package_branch || github.ref_name || 'develop' }}
   cancel-in-progress: false
 
 env:
   CI_PROJECT: processmaker
-  CI_PACKAGE_BRANCH: develop
-  IMAGE_TAG: processmaker-develop
-  CI_PR_BODY: 'ci:release-branch:develop'
   GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
   PACKAGIST_TOKEN: ${{ secrets.PACKAGIST_TOKEN }}
   ELLUCIAN_PACKAGIST_TOKEN: ${{ secrets.ELLUCIAN_PACKAGIST_TOKEN }}
@@ -46,35 +54,110 @@ env:
   PMAI_HOST_WS: pmai-ws.engk8s.processmaker.net
 
 jobs:
+  resolve:
+    name: resolve-package-branch
+    runs-on: ubuntu-latest
+    outputs:
+      package_branch: ${{ steps.resolve.outputs.package_branch }}
+      image_tag: ${{ steps.resolve.outputs.image_tag }}
+      ci_pr_body: ${{ steps.resolve.outputs.ci_pr_body }}
+    steps:
+      - name: Resolve package branch from Use workflow from / inputs
+        id: resolve
+        env:
+          INPUT_PACKAGE_BRANCH: ${{ inputs.package_branch }}
+          CALLER_REF_NAME: ${{ github.ref_name }}
+          CALLER_REF: ${{ github.ref }}
+          CALLER_REF_TYPE: ${{ github.ref_type }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          # Prefer explicit input, then the caller's "Use workflow from" / triggering
+          # branch (github.ref_name), else develop. Tags fall back to develop.
+          branch="${INPUT_PACKAGE_BRANCH:-}"
+          branch="${branch#"${branch%%[![:space:]]*}"}"
+          branch="${branch%"${branch##*[![:space:]]}"}"
+          branch="${branch#refs/heads/}"
+
+          if [ -z "$branch" ]; then
+            if [ "${CALLER_REF_TYPE:-}" = "tag" ]; then
+              branch=develop
+            elif [ -n "${CALLER_REF_NAME:-}" ]; then
+              # workflow_dispatch "Use workflow from" / schedule default branch
+              branch="$CALLER_REF_NAME"
+            elif [[ "${CALLER_REF:-}" == refs/heads/* ]]; then
+              branch="${CALLER_REF#refs/heads/}"
+            else
+              branch=develop
+            fi
+          fi
+
+          if [ -z "$branch" ]; then
+            branch=develop
+          fi
+
+          # Match deploy-pm4 IMAGE_TAG sanitizing (slashes -> dashes).
+          image_tag="processmaker-$(echo "$branch" | sed 's|/|-|g')"
+
+          # Keep release/k8s on develop. ci:release-branch drives RELEASE_BRANCH in
+          # the common action (and thus the pm4-k8s-distribution clone). Feature
+          # package branches usually do not exist on that repo.
+          release_branch=develop
+          ci_pr_body="ci:release-branch:${release_branch}"
+
+          {
+            echo "package_branch=${branch}"
+            echo "image_tag=${image_tag}"
+            echo "ci_pr_body=${ci_pr_body}"
+            echo "release_branch=${release_branch}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "event=${EVENT_NAME}"
+          echo "caller_ref=${CALLER_REF}"
+          echo "caller_ref_name=${CALLER_REF_NAME}"
+          echo "caller_ref_type=${CALLER_REF_TYPE}"
+          echo "input_package_branch=${INPUT_PACKAGE_BRANCH:-}"
+          echo "resolved package_branch=${branch}"
+          echo "resolved image_tag=${image_tag}"
+          echo "resolved release_branch=${release_branch}"
+          echo "resolved ci_pr_body=${ci_pr_body}"
+
   jsStackBuild:
     name: build-js-stack
+    needs: [resolve]
     if: ${{ !inputs.skip_build }}
     uses: ./.github/workflows/js-package.yml
     secrets: inherit
     with:
       trigger_repo: processmaker
-      trigger_ref: develop
+      trigger_ref: ${{ needs.resolve.outputs.package_branch }}
       stack_id: ${{ github.run_id }}
 
   imageEKS:
     name: build-docker-image-EKS
-    needs: [jsStackBuild]
+    needs: [resolve, jsStackBuild]
     if: ${{ !cancelled() && (needs.jsStackBuild.result == 'success' || needs.jsStackBuild.result == 'skipped') }}
     runs-on: ${{ vars.RUNNER }}
     timeout-minutes: 150
     permissions:
       contents: read
       id-token: write
+    env:
+      CI_PACKAGE_BRANCH: ${{ needs.resolve.outputs.package_branch }}
+      IMAGE_TAG: ${{ needs.resolve.outputs.image_tag }}
+      CI_PR_BODY: ${{ needs.resolve.outputs.ci_pr_body }}
     outputs:
       image_tag: ${{ steps.tag.outputs.image_tag }}
+      package_branch: ${{ needs.resolve.outputs.package_branch }}
     steps:
       - name: Set image tag
         id: tag
-        run: echo "image_tag=processmaker-develop" >> "$GITHUB_OUTPUT"
+        run: echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Use existing Harbor image
         if: ${{ inputs.skip_build }}
-        run: echo "Skipping build; deploying Harbor processmaker/enterprise:processmaker-develop"
+        run: echo "Skipping build; deploying Harbor processmaker/enterprise:${IMAGE_TAG}"
 
       - name: Checkout
         if: ${{ !inputs.skip_build }}
@@ -125,18 +208,19 @@ jobs:
         run: |
           cd pm4-k8s-distribution/images
           export CI_RELEASE_BRANCH=$RELEASE_BRANCH
+          export CI_PACKAGE_BRANCH="${CI_PACKAGE_BRANCH}"
           export REGISTRY_HOST=${{ secrets.REGISTRY_HOST }}
           if [[ -d js-stack && -f js-stack/manifest.json ]] && [[ "$(jq 'length' js-stack/manifest.json)" -gt 0 ]]; then
             export JS_STACK_PATH="$(pwd)/js-stack"
             echo "Using pre-built JS stack at $JS_STACK_PATH"
           fi
-          branch=develop tag=processmaker-develop bash build.k8s-cicd.sh
+          branch="${CI_PACKAGE_BRANCH}" tag="${IMAGE_TAG}" bash build.k8s-cicd.sh
 
       - name: Push Enterprise Image to Harbor
         if: ${{ !inputs.skip_build }}
         run: |
-          docker tag processmaker/enterprise:processmaker-develop ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:processmaker-develop
-          docker push ${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:processmaker-develop
+          docker tag "processmaker/enterprise:${IMAGE_TAG}" "${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${IMAGE_TAG}"
+          docker push "${{ secrets.REGISTRY_HOST }}/processmaker/enterprise:${IMAGE_TAG}"
 
       - name: Check rate limit on failure
         if: failure()
@@ -148,12 +232,13 @@ jobs:
 
   fpm-st:
     name: fpm-st
-    needs: [imageEKS]
+    needs: [resolve, imageEKS]
     if: ${{ !cancelled() && needs.imageEKS.result == 'success' }}
     uses: ./.github/workflows/nightly-testbench-arch.yml
     secrets: inherit
     with:
       image_tag: ${{ needs.imageEKS.outputs.image_tag }}
+      package_branch: ${{ needs.resolve.outputs.package_branch }}
       octane: false
       multitenancy: false
       arch_id: fpm-st
@@ -162,12 +247,13 @@ jobs:
 
   fpm-mt:
     name: fpm-mt
-    needs: [imageEKS]
+    needs: [resolve, imageEKS]
     if: ${{ !cancelled() && needs.imageEKS.result == 'success' }}
     uses: ./.github/workflows/nightly-testbench-arch.yml
     secrets: inherit
     with:
       image_tag: ${{ needs.imageEKS.outputs.image_tag }}
+      package_branch: ${{ needs.resolve.outputs.package_branch }}
       octane: false
       multitenancy: true
       arch_id: fpm-mt
@@ -176,12 +262,13 @@ jobs:
 
   octane-st:
     name: octane-st
-    needs: [imageEKS]
+    needs: [resolve, imageEKS]
     if: ${{ !cancelled() && needs.imageEKS.result == 'success' }}
     uses: ./.github/workflows/nightly-testbench-arch.yml
     secrets: inherit
     with:
       image_tag: ${{ needs.imageEKS.outputs.image_tag }}
+      package_branch: ${{ needs.resolve.outputs.package_branch }}
       octane: true
       multitenancy: false
       arch_id: octane-st
@@ -190,12 +277,13 @@ jobs:
 
   octane-mt:
     name: octane-mt
-    needs: [imageEKS]
+    needs: [resolve, imageEKS]
     if: ${{ !cancelled() && needs.imageEKS.result == 'success' }}
     uses: ./.github/workflows/nightly-testbench-arch.yml
     secrets: inherit
     with:
       image_tag: ${{ needs.imageEKS.outputs.image_tag }}
+      package_branch: ${{ needs.resolve.outputs.package_branch }}
       octane: true
       multitenancy: true
       arch_id: octane-mt
@@ -204,12 +292,14 @@ jobs:
 
   summary:
     name: summary
-    needs: [imageEKS, fpm-st, fpm-mt, octane-st, octane-mt]
+    needs: [resolve, imageEKS, fpm-st, fpm-mt, octane-st, octane-mt]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check nightly results
         run: |
+          echo "package_branch: ${{ needs.resolve.outputs.package_branch }}"
+          echo "image_tag: ${{ needs.resolve.outputs.image_tag }}"
           echo "imageEKS: ${{ needs.imageEKS.result }}"
           echo "fpm-st: ${{ needs.fpm-st.result }}"
           echo "fpm-mt: ${{ needs.fpm-mt.result }}"
