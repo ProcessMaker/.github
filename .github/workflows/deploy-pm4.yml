@@ -673,6 +673,11 @@ jobs:
           docker compose down -v --remove-orphans --timeout 0
           docker compose build phpunit
 
+          # Host-owned bind mount for coverage / event logs (see docker-compose.yml).
+          # Avoids docker cp after the suite chowns docker.sock for nginx.
+          mkdir -p phpunit-artifacts
+          rm -f phpunit-artifacts/coverage.xml phpunit-artifacts/phpunit.log
+
           # Run detached instead of attached. An attached `docker compose run` swallows
           # the runner's cancel signals: the container's PID 1 is sh, which ignores
           # SIGTERM, so compose keeps waiting and the job hangs until GitHub gives up.
@@ -700,23 +705,22 @@ jobs:
           PHPUNIT_EXIT=$(tr -dc '0-9' < "$RUNNER_TEMP/phpunit-exit-code")
           echo "phpunit container exited with ${PHPUNIT_EXIT:-unknown}"
 
-          # docker cp works on the stopped container, docker exec does not.
-          echo "Copying coverage report from PHP Unit Container: $PHPUNIT_CONTAINER"
-          if docker cp "$PHPUNIT_CONTAINER:/opt/processmaker/coverage.xml" coverage.xml; then
+          if [ -f phpunit-artifacts/coverage.xml ]; then
+            echo "Coverage report present at phpunit-artifacts/coverage.xml"
             echo "COVERAGE_EXISTS=true" >> $GITHUB_ENV
           else
-            echo "coverage.xml not found in container, skipping coverage archive and SonarQube"
+            echo "coverage.xml not found in phpunit-artifacts/, skipping coverage archive and SonarQube"
             echo "COVERAGE_EXISTS=false" >> $GITHUB_ENV
           fi
 
           if [ "${PHPUNIT_LOG_EVENTS:-}" = "true" ]; then
-            if docker cp "$PHPUNIT_CONTAINER:/opt/processmaker/phpunit.log" phpunit.log; then
-              echo "Copied phpunit.log (ci:phpunit-log-events)"
+            if [ -f phpunit-artifacts/phpunit.log ]; then
+              echo "phpunit.log present (ci:phpunit-log-events)"
               echo "PHPUNIT_LOG_EXISTS=true" >> $GITHUB_ENV
               echo "---- last 200 lines of phpunit.log ----"
-              tail -n 200 phpunit.log || true
+              tail -n 200 phpunit-artifacts/phpunit.log || true
             else
-              echo "phpunit.log not found in container"
+              echo "phpunit.log not found in phpunit-artifacts/"
               echo "PHPUNIT_LOG_EXISTS=false" >> $GITHUB_ENV
             fi
           fi
@@ -728,7 +732,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: phpunit-log-events-${{ github.run_id }}
-          path: ${{ env.PHPUNIT_COMPOSE_DIR }}/phpunit.log
+          path: ${{ env.PHPUNIT_COMPOSE_DIR }}/phpunit-artifacts/phpunit.log
           retention-days: 14
 
       - name: Force cleanup phpunit containers
@@ -745,7 +749,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: code-coverage
-          path: ./pm4-k8s-distribution/images/pm4-tools/coverage.xml
+          path: ./pm4-k8s-distribution/images/pm4-tools/phpunit-artifacts/coverage.xml
 
       - name: SonarQube Coverage Report
         if: env.COVERAGE_EXISTS == 'true'
@@ -760,4 +764,4 @@ jobs:
             -Dsonar.sources=.
             -Dsonar.tests=.
             -Dsonar.test.inclusions=**/*Test.php
-            -Dsonar.php.coverage.reportPaths=./pm4-k8s-distribution/images/pm4-tools/coverage.xml
+            -Dsonar.php.coverage.reportPaths=./pm4-k8s-distribution/images/pm4-tools/phpunit-artifacts/coverage.xml
