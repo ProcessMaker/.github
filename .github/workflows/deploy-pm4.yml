@@ -38,8 +38,8 @@ env:
   CUSTOMER_LICENSES_PAT: ${{ secrets.CUSTOMER_LICENSES_PAT }}
   SKIP_REDEPLOY: ${{ (contains(github.event.pull_request.body, 'ci:skip-redeploy')) && 'true' || 'false' }}
   CI_REDEPLOY: ${{ (contains(github.event.pull_request.body, 'ci:redeploy')) && 'true' || 'false' }}
+  # When set, phpunit skips coverage (faster/debuggable); Sonar still runs afterward.
   PHPUNIT_LOG_EVENTS: ${{ contains(github.event.pull_request.body, 'ci:phpunit-log-events') && 'true' || '' }}
-  ENABLE_PCOV: ${{ contains(github.event.pull_request.body, 'ci:phpunit-coverage') && 'true' || '' }}
   # K8S_BRANCH: ${{ contains(github.event.pull_request.body, 'ci:next') && 'next' || 'release-2024-fall' }}
   PMAI_HOST: ${{ contains(github.event.pull_request.body, 'ci:pmai_dev') && 'pmai-svc.pmai-system-dev.svc.cluster.local' || 'pmai-svc.pmai-system.svc.cluster.local' }}
   PMAI_HOST_WS: ${{ contains(github.event.pull_request.body, 'ci:pmai_dev') && 'pmai-dev-ws.engk8s.processmaker.net' || 'pmai-ws.engk8s.processmaker.net' }}
@@ -709,7 +709,7 @@ jobs:
             echo "Coverage report present at phpunit-artifacts/coverage.xml"
             echo "COVERAGE_EXISTS=true" >> $GITHUB_ENV
           else
-            echo "coverage.xml not found in phpunit-artifacts/, skipping coverage archive and SonarQube"
+            echo "coverage.xml not found in phpunit-artifacts/ (Sonar will still run without coverage)"
             echo "COVERAGE_EXISTS=false" >> $GITHUB_ENV
           fi
 
@@ -751,17 +751,36 @@ jobs:
           name: code-coverage
           path: ./pm4-k8s-distribution/images/pm4-tools/phpunit-artifacts/coverage.xml
 
-      - name: SonarQube Coverage Report
-        if: env.COVERAGE_EXISTS == 'true'
+      # Always run after phpunit (pass or fail). Coverage is on by default; skipped only for
+      # ci:phpunit-log-events. Same SONAR_HOST_URL as former package standalone workflows.
+      - name: Checkout source for SonarQube
+        if: always() && !cancelled()
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          token: ${{ secrets.GIT_TOKEN }}
+          path: sonar-src
+
+      - name: Rewrite coverage for SonarQube
+        if: always() && !cancelled() && env.COVERAGE_EXISTS == 'true'
+        run: |
+          python3 .github/scripts/rewrite-phpunit-coverage-for-sonar.py \
+            --input "${PHPUNIT_COMPOSE_DIR}/phpunit-artifacts/coverage.xml" \
+            --output sonar-src/coverage.sonar.xml \
+            --project "${CI_PROJECT}"
+          if [ -f sonar-src/coverage.sonar.xml ]; then
+            echo "SONAR_ARGS=-Dsonar.php.coverage.reportPaths=coverage.sonar.xml" >> "$GITHUB_ENV"
+          fi
+
+      - name: SonarQube Scan
+        if: always() && !cancelled()
         uses: sonarsource/sonarqube-scan-action@master
         env:
-          GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         with:
-          args: >
-            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
-            -Dsonar.sources=.
-            -Dsonar.tests=.
-            -Dsonar.test.inclusions=**/*Test.php
-            -Dsonar.php.coverage.reportPaths=./pm4-k8s-distribution/images/pm4-tools/phpunit-artifacts/coverage.xml
+          # Caller repo sonar-project.properties supplies projectKey/sources/tests.
+          projectBaseDir: sonar-src
+          args: ${{ env.SONAR_ARGS }}
