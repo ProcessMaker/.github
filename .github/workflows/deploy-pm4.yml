@@ -774,6 +774,16 @@ jobs:
             echo "SONAR_ARGS=-Dsonar.php.coverage.reportPaths=coverage.sonar.xml" >> "$GITHUB_ENV"
           fi
 
+      # Optional: packages that run Storybook (currently package-plg) upload
+      # storybook-coverage in a sibling job of the same workflow run. Missing is fine.
+      - name: Download Storybook coverage
+        if: always() && !cancelled()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: storybook-coverage
+          path: sonar-src/coverage
+
       - name: SonarQube Scan
         if: always() && !cancelled()
         uses: sonarsource/sonarqube-scan-action@master
@@ -782,5 +792,6 @@ jobs:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         with:
           # Caller repo sonar-project.properties supplies projectKey/sources/tests.
+          # JS lcov (if present): coverage/storybook/lcov.info via sonar.javascript.lcov.reportPaths.
           projectBaseDir: sonar-src
           args: ${{ env.SONAR_ARGS }}
