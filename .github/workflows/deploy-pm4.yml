@@ -56,7 +56,8 @@ jobs:
       !cancelled() &&
       (needs.deleteEKS.result == 'success' || needs.deleteEKS.result == 'skipped') &&
       github.event.action != 'closed' &&
-      inputs.delete == ''
+      inputs.delete == '' &&
+      !contains(github.event.pull_request.body, 'ci:skip-build')
     uses: ./.github/workflows/js-package.yml
     secrets: inherit
     with:
@@ -71,6 +72,7 @@ jobs:
     if: |
       !cancelled() &&
       (needs.deleteEKS.result == 'success' || needs.deleteEKS.result == 'skipped') &&
+      (needs.jsStackBuild.result == 'success' || needs.jsStackBuild.result == 'skipped') &&
       github.event.action != 'closed' &&
       inputs.delete == ''
     runs-on: ${{ vars.RUNNER }}
