@@ -69,7 +69,11 @@ echo "Applying fast relay rollout settings (Recreate strategy, exec probes, grac
 # JSON patch (not --type=merge): merge patch replaces the entire containers[]
 # array and drops required fields like image.
 # Replace whole probes so a prior tcpSocket handler cannot remain beside exec.
-TS_PROBE='tailscale --socket=/var/run/tailscale/tailscaled.sock status >/dev/null 2>&1'
+# Readiness: Tailscale must be logged in (status succeeds).
+# Liveness: only require tailscaled to be alive. Using status for liveness
+# SIGKILLs the pod during control-plane/DERP flakes and resets login.
+TS_READY_PROBE='tailscale --socket=/var/run/tailscale/tailscaled.sock status >/dev/null 2>&1'
+TS_LIVE_PROBE='pgrep -x tailscaled >/dev/null'
 grace_op="add"
 if kubectl get "${RELAY_DEPLOY}" -n "${NAMESPACE}" \
   -o jsonpath='{.spec.template.spec.terminationGracePeriodSeconds}' 2>/dev/null | grep -q '[0-9]'; then
@@ -80,15 +84,16 @@ kubectl patch "${RELAY_DEPLOY}" -n "${NAMESPACE}" --type=json -p "$(cat <<EOF
   {"op": "replace", "path": "/spec/strategy", "value": {"type": "Recreate"}},
   {"op": "${grace_op}", "path": "/spec/template/spec/terminationGracePeriodSeconds", "value": 10},
   {"op": "replace", "path": "/spec/template/spec/containers/0/readinessProbe", "value": {
-    "exec": {"command": ["/bin/sh", "-c", "${TS_PROBE}"]},
+    "exec": {"command": ["/bin/sh", "-c", "${TS_READY_PROBE}"]},
     "initialDelaySeconds": 3,
     "periodSeconds": 5,
-    "failureThreshold": 20
+    "failureThreshold": 36
   }},
   {"op": "replace", "path": "/spec/template/spec/containers/0/livenessProbe", "value": {
-    "exec": {"command": ["/bin/sh", "-c", "${TS_PROBE}"]},
-    "initialDelaySeconds": 15,
-    "periodSeconds": 15
+    "exec": {"command": ["/bin/sh", "-c", "${TS_LIVE_PROBE}"]},
+    "initialDelaySeconds": 20,
+    "periodSeconds": 20,
+    "failureThreshold": 6
   }}
 ]
 EOF

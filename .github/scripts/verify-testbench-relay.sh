@@ -18,7 +18,10 @@ NC_TIMEOUT_SEC="${RELAY_NC_TIMEOUT_SEC:-5}"
 # Allow MagicDNS / DERP / HAProxy health to settle after runner joins / relay restart.
 WAIT_SEC="${RELAY_VERIFY_WAIT_SEC:-90}"
 POLL_SEC="${RELAY_VERIFY_POLL_SEC:-10}"
-ROLLOUT_TIMEOUT_SEC="${RELAY_ROLLOUT_TIMEOUT_SEC:-90}"
+# Rollout can take several minutes when Tailscale bootstrap DNS/DERP is flaky.
+ROLLOUT_TIMEOUT_SEC="${RELAY_ROLLOUT_TIMEOUT_SEC:-240}"
+ROLLOUT_ATTEMPTS="${RELAY_ROLLOUT_ATTEMPTS:-3}"
+ROLLOUT_RETRY_SLEEP_SEC="${RELAY_ROLLOUT_RETRY_SLEEP_SEC:-45}"
 
 if ! command -v kubectl >/dev/null 2>&1; then
   echo "kubectl is required to verify the testbench runner relay"
@@ -88,10 +91,25 @@ if ! kubectl get "${RELAY_DEPLOY}" -n "${NAMESPACE}" >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "--- restart relay (refresh HAProxy upstream for ${UPSTREAM_HOST}) ---"
-kubectl rollout restart "${RELAY_DEPLOY}" -n "${NAMESPACE}"
-if ! kubectl rollout status "${RELAY_DEPLOY}" -n "${NAMESPACE}" --timeout="${ROLLOUT_TIMEOUT_SEC}s"; then
-  echo "FAIL: relay rollout after restart did not complete"
+rollout_ok=false
+attempt=0
+while [ "${attempt}" -lt "${ROLLOUT_ATTEMPTS}" ]; do
+  attempt=$((attempt + 1))
+  echo "--- restart relay (attempt ${attempt}/${ROLLOUT_ATTEMPTS}; refresh HAProxy upstream for ${UPSTREAM_HOST}) ---"
+  kubectl rollout restart "${RELAY_DEPLOY}" -n "${NAMESPACE}"
+  if kubectl rollout status "${RELAY_DEPLOY}" -n "${NAMESPACE}" --timeout="${ROLLOUT_TIMEOUT_SEC}s"; then
+    rollout_ok=true
+    break
+  fi
+  echo "WARN: relay rollout attempt ${attempt}/${ROLLOUT_ATTEMPTS} did not complete within ${ROLLOUT_TIMEOUT_SEC}s"
+  if [ "${attempt}" -lt "${ROLLOUT_ATTEMPTS}" ]; then
+    echo "Retrying relay restart in ${ROLLOUT_RETRY_SLEEP_SEC}s..."
+    sleep "${ROLLOUT_RETRY_SLEEP_SEC}"
+  fi
+done
+
+if [ "${rollout_ok}" != "true" ]; then
+  echo "FAIL: relay rollout after restart did not complete (${ROLLOUT_ATTEMPTS} attempts, ${ROLLOUT_TIMEOUT_SEC}s each)"
   dump_diagnostics
   exit 1
 fi
