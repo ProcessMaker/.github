@@ -573,7 +573,10 @@ jobs:
 
           # On ci:redeploy, stash the LE TLS secret as a GHA artifact so deploy can
           # restore it and avoid burning another Let's Encrypt issuance.
-          if [ "${{ github.event.action }}" != "closed" ] && [ "${{ inputs.delete }}" = "" ] && [[ "${{ github.event.pull_request.body }}" == *"ci:redeploy"* ]]; then
+          # Use env.CI_REDEPLOY (set via contains()) — do not interpolate the PR body
+          # into bash [[ ]], or quotes/backticks in the description abort the script
+          # before delete-instance.sh runs (set +e still leaves the job "successful").
+          if [ "${{ github.event.action }}" != "closed" ] && [ "${{ inputs.delete }}" = "" ] && [ "${{ env.CI_REDEPLOY }}" = "true" ]; then
             export PRESERVE_TLS_DIR="${RUNNER_TEMP}/ci-tls"
           fi
 
