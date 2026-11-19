@@ -1,0 +1,79 @@
+name: 'SonarQube Scan with retry'
+description: >-
+  Run sonarqube-scan-action up to 3 times with a 3-minute delay between attempts.
+  On final failure, print the runner egress IPv4 for allowlist debugging.
+  Requires SONAR_TOKEN and SONAR_HOST_URL in the caller step env.
+
+inputs:
+  projectBaseDir:
+    description: 'Path to the project base directory for the scanner'
+    required: true
+  args:
+    description: 'Extra sonar-scanner arguments'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: SonarQube Scan (attempt 1/3)
+      id: attempt1
+      continue-on-error: true
+      uses: sonarsource/sonarqube-scan-action@master
+      env:
+        SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+        SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+      with:
+        projectBaseDir: ${{ inputs.projectBaseDir }}
+        args: ${{ inputs.args }}
+
+    - name: Wait before SonarQube retry (attempt 2)
+      if: steps.attempt1.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "SonarQube scan attempt 1/3 failed; waiting 3 minutes before retry..."
+        sleep 180
+
+    - name: SonarQube Scan (attempt 2/3)
+      id: attempt2
+      if: steps.attempt1.outcome == 'failure'
+      continue-on-error: true
+      uses: sonarsource/sonarqube-scan-action@master
+      env:
+        SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+        SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+      with:
+        projectBaseDir: ${{ inputs.projectBaseDir }}
+        args: ${{ inputs.args }}
+
+    - name: Wait before SonarQube retry (attempt 3)
+      if: steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "SonarQube scan attempt 2/3 failed; waiting 3 minutes before retry..."
+        sleep 180
+
+    - name: SonarQube Scan (attempt 3/3)
+      id: attempt3
+      if: steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure'
+      continue-on-error: true
+      uses: sonarsource/sonarqube-scan-action@master
+      env:
+        SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+        SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+      with:
+        projectBaseDir: ${{ inputs.projectBaseDir }}
+        args: ${{ inputs.args }}
+
+    - name: Fail if SonarQube scan still failing
+      if: >-
+        steps.attempt1.outcome == 'failure' &&
+        steps.attempt2.outcome == 'failure' &&
+        steps.attempt3.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "::error::SonarQube scan failed after 3 attempts (often a connect timeout to SONAR_HOST_URL)."
+        echo "Runner egress IPv4 (for SonarQube IP allowlist debugging):"
+        curl -4 icanhazip.com
+        echo
+        exit 1

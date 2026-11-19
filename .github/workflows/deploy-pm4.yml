@@ -492,9 +492,9 @@ jobs:
           echo "INSTANCE: $instance"
           export USER_GROUP="$(id -u):$(id -g)"
           chmod +x ./start.sh
-          # Shared mail/Tailscale path; MT uses tenant-1 mailbox set (abe-imap-1@…).
+          # Shared mail/Tailscale path; MT runs all tenants in parallel (abe-imap-N@…).
           if [ "${{ env.MULTITENANCY }}" = "true" ]; then
-            ./start.sh --tenants tenant-1
+            ./start.sh --tenants tenant-1,tenant-2,tenant-3
           else
             ./start.sh --tenants single
           fi
@@ -791,12 +791,13 @@ jobs:
 
       - name: SonarQube Scan
         if: always() && !cancelled()
-        uses: sonarsource/sonarqube-scan-action@master
+        uses: ./.github/actions/sonar-scan-with-retry
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         with:
           # Caller repo sonar-project.properties supplies projectKey/sources/tests.
           # JS lcov (if present): coverage/storybook/lcov.info via sonar.javascript.lcov.reportPaths.
+          # Retries connect flakes 3x with 3 minutes between attempts; prints egress IP on final failure.
           projectBaseDir: sonar-src
           args: ${{ env.SONAR_ARGS }}
