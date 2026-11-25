@@ -19,9 +19,11 @@ helm repo update
 
 echo "Disabling testbench runner relay for release ${RELEASE}..."
 # --no-hooks: relay-only change; skip post-upgrade update-pm4 (and other hooks).
+# --force-conflicts: Helm 4 SSA vs Rancher "agent" ownership of .spec.replicas.
 helm upgrade --timeout 10m "${RELEASE}" processmaker/enterprise \
   --reuse-values \
   --no-hooks \
+  --force-conflicts \
   --set testbenchRunnerRelay.enable=false \
   --set testbenchRunnerRelay.tailscale.authKey= \
   --version "${versionHelm}"

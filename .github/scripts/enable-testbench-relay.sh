@@ -51,9 +51,12 @@ fi
 
 echo "Enabling testbench runner relay for release ${RELEASE} (upstream tb-ci-${INSTANCE})..."
 # --no-hooks: instance is already ready; skip post-upgrade update-pm4 (and other hooks).
+# --force-conflicts: Helm 4 SSA; Rancher field manager "agent" often owns
+# Deployment .spec.replicas after scale, which otherwise fails the upgrade.
 helm upgrade --timeout 15m "${RELEASE}" "${HELM_CHART_ARGS[@]}" \
   --reuse-values \
   --no-hooks \
+  --force-conflicts \
   -f "${RELAY_VALUES_RENDERED}" \
   --set testbenchRunnerRelay.enable=true \
   --set "testbenchRunnerRelay.upstreamHost=tb-ci-${INSTANCE}" \
